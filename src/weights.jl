@@ -29,6 +29,10 @@ function filon_moments(upto_n::Integer, w::Real, a::Real, b::Real)
     return moments
 end
 
+"""
+Hard-coded Hermite cardinal polynomials, i.e. the basis functions ℓ_10, ... ,
+ℓ_1s such that ℓ^(k)_1j(1) = δ_kj and ℓ^(k)(-1) = 0 for k=0:s.
+"""
 function hermite_cardinal_polynomials(s::Integer)
     one_plus_x = Polynomial((1,1)) # 1 + x
     one_minus_x = Polynomial((1,-1)) # 1 - x
@@ -62,6 +66,52 @@ function hermite_cardinal_polynomials(s::Integer)
 end
 
 """
+    derivative_monomial_matrix(x, n_deriv, degree)
+
+Return the (1+n_deriv)×(1+degree) upper-triangular matrix whose (i,j)-th entry is
+the (i-1)-th derivative of x^(j-1), evaluated at `x`.
+
+E.g.
+
+    1 x x^2
+    0 1 2x
+    0 0 2
+"""
+function derivative_monomial_matrix(x, n_deriv, degree)
+    M = zeros(eltype(x), n_deriv+1, degree+1)
+
+    for i in 1:n_deriv+1
+        k = i - 1                     # derivative order
+        for j in i:degree+1
+            p = j - 1                 # power
+            M[i,j] = p < k ? 0 : factorial(p) / factorial(p-k) * x^(p-k)
+        end
+    end
+
+    return M
+end
+
+"""
+Create the polynomial which interpolates f(a), f'(a), ..., and f(b), f'(b), ....
+"""
+function hermite_interpolating_polynomial(a, b, fa_derivs, fb_derivs)
+    n_deriv_a = length(fa_derivs)-1
+    n_deriv_b = length(fb_derivs)-1
+    degree = n_deriv_a + n_deriv_b + 1
+
+    a_mat = derivative_monomial_matrix(a, n_deriv_a, degree)
+    b_mat = derivative_monomial_matrix(b, n_deriv_b, degree)
+
+
+    LHS = vcat(a_mat, b_mat)
+    rhs = vcat(fa_derivs..., fb_derivs...)
+
+    coefficients = LHS \ rhs
+    return Polynomial(coefficients)
+end
+
+
+"""
 Construct the hermite interpolating polynomial using the given points and
 derivative values. That is, constructs the polynomial
 
@@ -92,6 +142,7 @@ function linear_system_hermite_interpolant(a, b, fa_derivs, fb_derivs)
     degree = length(fa_derivs) + length(fa_derivs) - 1
     A = zeros(degree+1, degree+1)
     for i in 1:length(fa_derivs)
+
           
     end
 end
