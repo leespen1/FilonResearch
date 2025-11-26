@@ -2,3 +2,11 @@ name = "FilonResearch"
 uuid = "3a284e70-3988-4fde-94af-e81b1d70ca0a"
 authors = ["Spencer Lee <leespen1@msu.edu>"]
 version = "0.1.0"
+
+[deps]
+Polynomials = "f27b6e38-b328-58d1-80ce-0feddd5e7a45"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[compat]
+Polynomials = "4.1.0"
+Test = "1.11.0"

@@ -1,4 +1,102 @@
 """
+Compute the moments
+
+    \\mu_n(x) = \\int_a^b x^n e^{iwx} dx
+
+and store them in a vector.
+
+WARNING: unstable at w=0.
+"""
+function filon_moments(upto_n::Integer, w::Real, a::Real, b::Real)
+    @assert upto_n >= 0 "Must at least one moment."
+    moments::Vector{ComplexF64} = fill(NaN+im*NaN, 1+upto_n)
+
+    if (w == 0)
+        for n in 0:upto_n
+            moments[1+n] = (b^(n+1) - a^(n+1)) / (n+1)
+        end
+        
+    else
+
+        exp_a = exp(im*w*a)
+        exp_b = exp(im*w*b)
+
+        moments[1] = (-im/w)*(exp_b - exp_a)
+        for n in 1:upto_n
+            moments[1+n] = (-im/w)*(exp_b*b^n - exp_a*a^n) + (im*n/w)*moments[1+n-1]
+        end
+    end
+    return moments
+end
+
+function hermite_cardinal_polynomials(s::Integer)
+    one_plus_x = Polynomial((1,1)) # 1 + x
+    one_minus_x = Polynomial((1,-1)) # 1 - x
+
+    if (s < 0) || (s > 3)
+        throw(ArgumentError("s must be between 0 and 3; got $s"))
+    end
+
+    polynomials = Vector{Polynomial{Float64, :x}}(undef, s+1)
+    if (s == 0)
+        polynomials[1] = (1/2)*one_plus_x # ℓ_10
+    elseif (s == 1)
+        polynomials[1] = (1/4) * one_plus_x^2 * Polynomial((2,-1)) # ℓ_10
+        polynomials[2] = -(1/4) * one_plus_x^2 * one_minus_x # ℓ_11
+    elseif (s == 2)
+        polynomials[1] = (1/16) * one_plus_x^3 * Polynomial((8,-9,3)) # ℓ_10
+        polynomials[2] = -(1/16) * one_plus_x^3 * one_minus_x * Polynomial((5,-3)) # ℓ_11
+        polynomials[3] = (1/16) * one_plus_x^3 * one_minus_x^2 # ℓ_12
+    elseif (s == 3)
+        # (according to textbook) polynomials[1] = (1/32) * one_plus_x^4 * Polynomial((19,-37,27,-7)) # ℓ_10
+        polynomials[1] = (1/32) * one_plus_x^4 * Polynomial((16,-29,20,-5)) # ℓ_10
+        polynomials[2] = -(1/32) * one_plus_x^4 * one_minus_x * Polynomial((11,-14,5)) # ℓ_11
+        # (according to textbook) polynomials[3] = (1/32) * one_plus_x^4 * one_minus_x^2 * Polynomial((-2,3)) # ℓ_12
+        polynomials[3] = (1/32) * one_plus_x^4 * one_minus_x^2 * Polynomial((3,-2)) # ℓ_12
+        polynomials[4] = -(1/96) * one_plus_x^4 * one_minus_x^3 # ℓ_13
+    else
+        throw
+    end
+
+    return polynomials
+end
+
+"""
+Construct the hermite interpolating polynomial using the given points and
+derivative values. That is, constructs the polynomial
+
+    p(x) = c0 + c_1x + c_2x^2 + ...
+
+By solving 
+
+    Ax=b
+
+with 
+
+    [1 a a^2 a^3 ... |
+    [0 1 2a 3a^2 ... number of vals and derivs at t
+    [0 0 2  6a   ... |
+A = [...             |
+    [1 b b^2 b^3 ... |
+    [0 1 2b 3b^2 ... number of vals and derivs at t
+    [0 0 2  6b   ... |
+    [...             |
+
+x = [c0, c1, c_2, ...]
+
+b = [f(a), f'(a), ..., f(b), f'(b), ...]
+
+WORK IN PROGRESS
+"""
+function linear_system_hermite_interpolant(a, b, fa_derivs, fb_derivs)
+    degree = length(fa_derivs) + length(fa_derivs) - 1
+    A = zeros(degree+1, degree+1)
+    for i in 1:length(fa_derivs)
+          
+    end
+end
+
+"""
 
 """
 function convert_weights_to_other_side(weights)
