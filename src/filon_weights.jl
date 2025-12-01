@@ -30,12 +30,12 @@ Compute the weights
     
     b_{k,j}(\\omega) = I_\\omega[\\ell_{k,j}] = \\int_a^b \\ell_{k,j}(x)e^{i\\omega x} dx
 """
-function filon_weights(s::Integer, w::Real, a::Real=-1, b::Real=1)
+function filon_weights(w::Real, s::Integer, a::Real=-1, b::Real=1)
     degree = 2*s+1
     moments = filon_moments(degree, w, a, b)
 
-    left_weights::Vector{ComplexF64} = fill(NaN+im*NaN, 1+s)
-    right_weights::Vector{ComplexF64} = copy(left_weights)
+    weights_a::Vector{ComplexF64} = fill(NaN+im*NaN, 1+s)
+    weights_b::Vector{ComplexF64} = copy(weights_a)
 
     fa_derivs = zeros(Int64, 1+s)
     fb_derivs = zeros(Int64, 1+s)
@@ -46,17 +46,63 @@ function filon_weights(s::Integer, w::Real, a::Real=-1, b::Real=1)
         fb_derivs .= 0
         fa_derivs[1+i] = 1
         ℓ_ai = hermite_interpolating_polynomial(a, b, fa_derivs, fb_derivs)
-        left_weights[1+i] = sum(moments .* Polynomials.coeffs(ℓ_ai))
+        weights_a[1+i] = sum(moments .* Polynomials.coeffs(ℓ_ai))
          
         # Setup f⁽ʲ⁾(a) = 0, f⁽ʲ⁾(b) = δᵢⱼ
         fa_derivs .= 0
         fb_derivs .= 0
         fb_derivs[1+i] = 1
         ℓ_bi = hermite_interpolating_polynomial(a, b, fa_derivs, fb_derivs)
-        right_weights[1+i] = sum(moments .* Polynomials.coeffs(ℓ_bi))
+        weights_b[1+i] = sum(moments .* Polynomials.coeffs(ℓ_bi))
     end
 
-    return left_weights, right_weights
+    return weights_a, weights_b
 end
 
+"""
+Generate s=0 (second-order) Filon Weights (on the interval [-1,1])
+"""
+function hardcoded_filon_weights(w::Real, s::Integer)
+    b_20 = zero(ComplexF64) # For type stability
+    b_21 = zero(ComplexF64)
+    right_weights = zeros(ComplexF64, 1+s)
 
+
+    if s == 0
+        if w == 0
+            b_20 += 1.0
+        else
+            #b_10 = im*exp(-im*w)/w - im*sin(w)/w^2
+            b_20 += -im*exp(im*w)/w + im*sin(w)/w^2
+        end
+        right_weights[1] = b_20
+    elseif s == 1
+        if w == 0
+            #b_10 = 1
+            b_20 += 1
+            #b_11 = 1/3
+            b_21 += -1/3 
+        else
+            #b_10 = exp(-w*im)im/w
+            #b_10 += 3im*cos(w)/(w^3)
+            #b_10 += -3im*sin(w)/(w^4)
+            b_20 += -im*exp(w*im)/w
+            b_20 += -3im*cos(w)/(w^3)
+            b_20 += 3im*sin(w)/(w^4)
+
+            #b_11 = -exp(-w*im)/(w^2)
+            #b_11 += im*(2*exp(-im*w) + exp(im*w))/(w^3)
+            #b_11 += -3im*sin(w)/(w^4)
+
+            b_21 += exp(w*im)/(w^2)
+            b_21 += im*(exp(-im*w) + 2*exp(im*w))/(w^3)
+            b_21 += -3im*sin(w)/(w^4)
+        end
+        right_weights[1] = b_20
+        right_weights[2] = b_21
+    else
+        throw(DomainError("s must be 0 or 1 for hard-coded Filon weights"))
+    end
+    left_weights = [(-1)^j * right_weights[1+j] for j in 0:s]
+    return left_weights, right_weights
+end
