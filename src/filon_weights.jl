@@ -60,7 +60,7 @@ function filon_weights(w::Real, s::Integer, a::Real=-1, b::Real=1)
 end
 
 """
-Generate s=0 (second-order) Filon Weights (on the interval [-1,1])
+Generate Filon weights (on the interval [-1,1])
 """
 function hardcoded_filon_weights(w::Real, s::Integer)
     b_20 = zero(ComplexF64) # For type stability
@@ -103,6 +103,6 @@ function hardcoded_filon_weights(w::Real, s::Integer)
     else
         throw(DomainError("s must be 0 or 1 for hard-coded Filon weights"))
     end
-    left_weights = [(-1)^j * right_weights[1+j] for j in 0:s]
+    left_weights = [(-1)^j * conj(right_weights[1+j]) for j in 0:s]
     return left_weights, right_weights
 end
