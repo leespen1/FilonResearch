@@ -7,6 +7,6 @@ end
     include("./test_filon_weights.jl")
 end
 @testset "Explicit Filon integration" begin
-    include("./test_explcit_filon_integration.jl")
+    include("./test_explicit_filon_integration.jl")
 end
 

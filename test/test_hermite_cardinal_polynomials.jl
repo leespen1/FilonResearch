@@ -3,7 +3,7 @@ using Random: MersenneTwister
 
 @testset "Hard-coded Hermite cardinal polynomial correctness" begin
     @testset "s=$s" for s=0:3
-        polynomials = hermite_cardinal_polynomials(s)
+        polynomials = hardcoded_hermite_cardinal_polynomials(s)
         @testset "ℓ_1$(j-1)" for (j, poly) in enumerate(polynomials)
             @testset "Derivative $k" for k in 0:s
                 if k == j-1
@@ -35,7 +35,7 @@ end
         a = -1
         b = 1
         @testset "s=$s" for s=0:3
-            hard_coded_polys = hermite_cardinal_polynomials(s)
+            hard_coded_polys = hardcoded_hermite_cardinal_polynomials(s)
             @testset "ℓ_1$k" for k in 0:s
 
                 fa_derivs = zeros(1+s)
