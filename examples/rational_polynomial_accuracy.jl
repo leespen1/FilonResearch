@@ -1,5 +1,6 @@
 using FilonResearch
 using SpecialFunctions: expint
+using Polynomials
 #using GLMakie
 using CairoMakie
 CairoMakie.set_theme!(CairoMakie.theme_latexfonts())
