@@ -43,23 +43,3 @@ function filon_dahlquist_timestep(λ, ω, s, tₙ, tₙ₊₁, uₙ)
     return uₙ₊₁
 end
 
-"""
-Compute
-
-    d^m (uv)
-
-for m=0, ..., s.
-"""
-function general_leibniz_rule(u_derivs, v_derivs)
-    @assert length(u_derivs) == length(v_derivs)
-    s = length(u_derivs)-1
-    prod_derivs = zeros(ComplexF64, 1+s)
-    for m in 0:s
-        for k in 0:m
-            prod_derivs[1+m] = binomial(m, k) * u_derivs[1+m-k] * v_derivs[1+k]
-        end
-    end
-    return prod_derivs
-end
-
-
