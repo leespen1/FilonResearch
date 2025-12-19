@@ -84,7 +84,7 @@ x = [c0, c1, c_2, ...]
 
 b = [f(a), f'(a), ..., f(b), f'(b), ...]
 """
-function hermite_interpolating_polynomial(a, b, fa_derivs, fb_derivs)
+function hermite_interpolating_polynomial(a::Real, b::Real, fa_derivs::AbstractVector{<: Real}, fb_derivs::AbstractVector{<: Real})
     n_deriv_a = length(fa_derivs)-1
     n_deriv_b = length(fb_derivs)-1
     degree = n_deriv_a + n_deriv_b + 1
@@ -94,7 +94,7 @@ function hermite_interpolating_polynomial(a, b, fa_derivs, fb_derivs)
 
 
     LHS = vcat(a_mat, b_mat)
-    rhs = vcat(fa_derivs..., fb_derivs...)
+    rhs = vcat(fa_derivs, fb_derivs)
 
     coefficients = LHS \ rhs
     return Polynomial(coefficients)

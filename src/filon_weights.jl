@@ -40,20 +40,24 @@ function filon_weights(w::Real, s::Integer, a::Real=-1, b::Real=1)
     fa_derivs = zeros(Int64, 1+s)
     fb_derivs = zeros(Int64, 1+s)
     
+    # Note: mapreduce(*, +, v1, v2) is safer than sum(v1 .* v2) here beacuse
+    # coeffs(ℓ_ai) may be shorter than moments due to ℓ_ai not having max degree
     for i in 0:s
         # Setup f⁽ʲ⁾(a) = δᵢⱼ, f⁽ʲ⁾(b) = 0
         fa_derivs .= 0 
         fb_derivs .= 0
         fa_derivs[1+i] = 1
         ℓ_ai = hermite_interpolating_polynomial(a, b, fa_derivs, fb_derivs)
-        weights_a[1+i] = sum(moments .* Polynomials.coeffs(ℓ_ai))
+        weights_a[1+i] = mapreduce(*, +, moments, Polynomials.coeffs(ℓ_ai))
+        #weights_a[1+i] = sum(moments .* Polynomials.coeffs(ℓ_ai))
          
         # Setup f⁽ʲ⁾(a) = 0, f⁽ʲ⁾(b) = δᵢⱼ
         fa_derivs .= 0
         fb_derivs .= 0
         fb_derivs[1+i] = 1
         ℓ_bi = hermite_interpolating_polynomial(a, b, fa_derivs, fb_derivs)
-        weights_b[1+i] = sum(moments .* Polynomials.coeffs(ℓ_bi))
+        weights_b[1+i] = mapreduce(*, +, moments, Polynomials.coeffs(ℓ_bi))
+        #weights_b[1+i] = sum(moments .* Polynomials.coeffs(ℓ_bi))
     end
 
     return weights_a, weights_b
