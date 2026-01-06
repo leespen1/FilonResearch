@@ -30,8 +30,8 @@ function filon_timestep(λ::Union{Number, AbstractVector}, ω::Real, u_prev::Num
     exp_prev_derivs = exp_iωt_derivs(-ω, t_prev, s)
     exp_next_derivs = exp_iωt_derivs(-ω, t_next, s)
 
-    f_prev_derivs = general_leibniz_rule(u̇_prev_derivs, exp_prev_derivs)
-    f_next_derivs = general_leibniz_rule(u̇_next_derivs, exp_next_derivs)
+    f_prev_derivs = multiple_general_leibniz_rule(u̇_prev_derivs, exp_prev_derivs)
+    f_next_derivs = multiple_general_leibniz_rule(u̇_next_derivs, exp_next_derivs)
 
     if rescale # Integrate over interval [-1,1] instead of [t_prev, t_next]
         Δt = t_next - t_prev
@@ -110,3 +110,47 @@ function filon_dahlquist(λ, ω, s, nsteps, tf, u₀)
     return uₙ₊₁
 end
 =#
+
+# TODO this is CHatGPT's suggestion for saveat logic. But don't do the
+# linear interpolation thing. Instead do Hermite interpolation or just shorten timestep size.
+function integrate(step, u0::Number, tspan, dt::Real; saveat=dt)
+    t_saves = Float64[]
+    u_saves = ComplexF64[]
+
+    t0, tf = tspan
+    t = t0
+    u = u0
+
+    # Prepare save structure
+    if saveat === nothing
+        ts = Float64[]
+        us = typeof(u)[]
+        push!(ts, t)
+        push!(us, u)
+        next_save_idx = nothing
+    else
+        ts = collect(saveat)
+        us = Vector{typeof(u)}(undef, length(ts))
+        next_save_idx = 1
+    end
+
+    while t < tf - eps(tf)
+        u_new = step!(u, t, dt)
+        t_new = t + dt
+
+        # Check save crossings
+        if next_save_idx !== nothing
+            while next_save_idx ≤ length(ts) && ts[next_save_idx] ≤ t_new
+                θ = (ts[next_save_idx] - t) / dt
+                us[next_save_idx] = (1 - θ) * u + θ * u_new
+                next_save_idx += 1
+            end
+        end
+
+        u = u_new
+        t = t_new
+    end
+
+    return saveat === nothing ? (nothing, nothing) : (ts, us)
+end
+
