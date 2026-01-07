@@ -20,27 +20,23 @@ function filon_timestep_order2_size2(
     w1, w2 = frequencies
 
     s = 0
-    b_E_w1_vec, b_I_w1_vec = filon_weights(frequencies[1], s, t_n, t_np1)
-    b_E_w2_vec, b_I_w2_vec = filon_weights(frequencies[2], s, t_n, t_np1)
-    @assert size(b_E_w1_vec) == size(b_E_w2_vec) == size(b_I_w1_vec) == size(b_I_w2_vec) == (1,) "Should only have one weight at each point."
-    b_E_w1 = b_E_w1_vec[1]
-    b_I_w1 = b_I_w1_vec[1]
-    b_E_w2 = b_E_w2_vec[1]
-    b_I_w2 = b_I_w2_vec[1]
+    b_E_w1, b_I_w1 = filon_weights(frequencies[1], s, t_n, t_np1)
+    b_E_w2, b_I_w2 = filon_weights(frequencies[2], s, t_n, t_np1)
+    @assert size(b_E_w1) == size(b_E_w2) == size(b_I_w1) == size(b_I_w2) == (1,) "Should only have one weight at each point."
 
     rhs = zeros(ComplexF64, 2)
     for i in 1:2
         rhs[i] += u_n[i]
-        rhs[i] += b_E_w1*A_n[i,1]*cis(-w1*t_n)*u_n[1]
-        rhs[i] += b_E_w2*A_n[i,2]*cis(-w2*t_n)*u_n[2] 
+        rhs[i] += b_E_w1[1]*A_n[i,1]*cis(-w1*t_n)*u_n[1]
+        rhs[i] += b_E_w2[1]*A_n[i,2]*cis(-w2*t_n)*u_n[2] 
     end
 
     # LHS * u_np1 = RHS * u_n
 
     LHS = ComplexF64[1 0;0 1] # Identity matrix
     for i in 1:2
-        LHS[i,1] -= b_I_w1*A_np1[i,1]*cis(-w1*t_np1)
-        LHS[i,2] -= b_I_w2*A_np1[i,2]*cis(-w2*t_np1)
+        LHS[i,1] -= b_I_w1[1]*A_np1[i,1]*cis(-w1*t_np1)
+        LHS[i,2] -= b_I_w2[1]*A_np1[i,2]*cis(-w2*t_np1)
     end
     #@show t_n t_np1 LHS rhs
     u_np1 = LHS \ rhs
