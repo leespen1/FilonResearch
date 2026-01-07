@@ -35,10 +35,12 @@ function filon_timestep_order2_size2(
         rhs[i] += b_E_w2*A_n[i,2]*cis(-w2*t_n)*u_n[2] 
     end
 
+    # LHS * u_np1 = RHS * u_n
+
     LHS = ComplexF64[1 0;0 1] # Identity matrix
     for i in 1:2
-        LHS[i,1] -= b_E_w1*A_np1[i,1]*cis(-w1*t_np1)
-        LHS[i,2] -= b_E_w2*A_np1[i,2]*cis(-w2*t_np1)
+        LHS[i,1] -= b_I_w1*A_np1[i,1]*cis(-w1*t_np1)
+        LHS[i,2] -= b_I_w2*A_np1[i,2]*cis(-w2*t_np1)
     end
     #@show t_n t_np1 LHS rhs
     u_np1 = LHS \ rhs
@@ -50,15 +52,16 @@ function filon_order2_size2(
     u0::Vector{<: Number},
     frequencies::Vector{<: Real},
     T::Real,
-    dt::Real,
+    nsteps::Integer,
 )
     A_func = isa(A, Function) ? A : t -> A # Turn matrix A into function A, if needed
-    t = 0
     u_n::Vector{ComplexF64} = u0
     u_saves = [u_n]
-    while t < T
-        t_n = t
-        t_np1 = min(t + dt, T)
+
+    dt = T / nsteps
+    for n in 1:nsteps
+        t_n = dt*(n-1)
+        t_np1 = dt*n
 
         A_n = A_func(t_n)
         A_np1 = A_func(t_np1)
@@ -75,7 +78,6 @@ function filon_order2_size2(
         push!(u_saves, u_np1)
 
         u_n = u_np1
-        t = t_np1
     end
 
     return u_saves
