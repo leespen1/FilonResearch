@@ -15,5 +15,7 @@ export general_leibniz_rule, multiple_general_leibniz_rule, exp_iωt_derivs,
     dahlquist_derivatives, linear_ode_derivs
 include("scalar_filon.jl")
 export filon_timestep
+include("hard_coded_2by2.jl")
+export filon_timestep_order2_size2, filon_order2_size2
 
 end # module FilonResearch
