@@ -1,4 +1,4 @@
-using FilonResearch, Test, Polynomials
+using FilonResearch, Test, Polynomials, LinearAlgebra
 import Random: MersenneTwister
 
 @testset "Derivatives of e^(iωt)" begin
@@ -67,7 +67,20 @@ end
             u_derivs_true = [u, du, d2u, d3u]
 
             u_derivs_computed = linear_ode_derivs(A_derivs, u)
-            @test u_derivs_computed ≈ u_derivs_true atol=1e-14 rtol=1e14
+            @test u_derivs_computed ≈ u_derivs_true atol=1e-14 rtol=1e-14
         end
     end
+
+    @testset "Agreement between soft and hardcoded versions" begin
+        N = 4
+        u = rand(MersenneTwister(0), ComplexF64, N)
+        A_derivs = [rand(MersenneTwister(i), ComplexF64, N, N) for i in 0:2]
+
+        u_derivs_soft = linear_ode_derivs(A_derivs, u)
+        u_derivs_hard = linear_ode_derivs_hardcoded(A_derivs, u)
+        for derivative_order in 0:3
+            @test u_derivs_soft[1+derivative_order] ≈ u_derivs_hard[1+derivative_order] atol=1e-14 rtol=1e-14
+        end
+    end
+
 end

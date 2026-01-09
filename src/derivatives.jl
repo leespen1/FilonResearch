@@ -5,7 +5,7 @@ Compute
 
 for m=0, ..., s.
 """
-function multiple_general_leibniz_rule(u_derivs::Vector{<: Number}, v_derivs::Vector{<: Number})
+function multiple_general_leibniz_rule(u_derivs, v_derivs)
     @assert length(u_derivs) == length(v_derivs) "Must provide same number of derivatives for u and v."
     s = length(u_derivs)-1
     return [general_leibniz_rule(u_derivs, v_derivs, m) for m in 0:s]
@@ -24,9 +24,14 @@ function general_leibniz_rule(
     v_derivs,
     s=min(length(u_derivs), length(v_derivs))-1, # compute derivatives up to order s
 )
+    @assert isconcretetype(eltype(u_derivs)) && isconcretetype(eltype(v_derivs)) "Eltypes of u and v derivs must be concrete."
     @assert s >= 0 "Derivative order s=$s must be greater than or equal to zero."
-    @assert length(u_derivs) > s && length(v_derivs) > s "Must provide > s derivatives of u and v to compute s derivatives of u*v."
-    prod_deriv_m = sum(binomial(s, k) * u_derivs[1+s-k] * v_derivs[1+k] for k in 0:s)
+    @assert length(u_derivs) > s && length(v_derivs) > s "Must provide > s derivatives of u and v to compute s derivatives of u*v. (s=$s, length(u_derivs)=$(length(u_derivs)), length(v_derivs)=$(length(v_derivs))"
+    if eltype(u_derivs) isa AbstractVector && eltype(v_derivs) isa AbstractVector # For vector products, must broadcast, not standard *
+        prod_deriv_m = sum(binomial(s, k) .* u_derivs[1+s-k] .* v_derivs[1+k] for k in 0:s)
+    else
+        prod_deriv_m = sum(binomial(s, k) * u_derivs[1+s-k] * v_derivs[1+k] for k in 0:s)
+    end
     return prod_deriv_m
 end
 
@@ -50,13 +55,38 @@ Given A, Ȧ, Ä, …, compute u̇, ü, … for the differential equation
 
 using the general leibniz rule (product rule)
 """
-function linear_ode_derivs(A_derivs, u, s=length(A_derivs)-1)
+function linear_ode_derivs(A_derivs, u, maxorder=length(A_derivs))
 # TODO make a hard-coded version of this for first few orders, e.g. do u̇ = (Ȧ + A²)u
-    @assert length(A_derivs) > s "Must provide > s derivatives of A to compute s derivatives of dudt = A*u."
+    @assert length(A_derivs) >= maxorder-1 "Must provide ≥ (maxorder-1) derivatives of A to compute s derivatives of dudt = A*u."
     u_derivs = [u]
-    for m in 0:s
+    for m in 0:maxorder-1
         dm_u = general_leibniz_rule(A_derivs, u_derivs, m)
         push!(u_derivs, dm_u)
     end
     return u_derivs
 end
+
+function linear_ode_derivs_hardcoded(A_derivs, u, maxorder=length(A_derivs))
+    @assert length(A_derivs) >= maxorder-1 "Must provide > maxorder derivatives of A to compute s derivatives of dudt = A*u."
+    @assert maxorder <= 3 "Hardcoded version only supports computing up to 3 derivatives."
+
+    u_derivs = [u]
+    if maxorder > 0
+        A = A_derivs[1]
+        u̇ = A*u
+        push!(u_derivs, u̇)
+        if maxorder > 1
+            Ȧ = A_derivs[2]
+            ü = Ȧ*u + A*u̇
+            push!(u_derivs, ü)
+            if maxorder > 2
+                Ä = A_derivs[3]
+                u⃛ = Ä*u + 2*Ȧ*u̇ + A*ü
+                push!(u_derivs, u⃛)
+            end
+        end
+    end
+
+    return u_derivs
+end
+

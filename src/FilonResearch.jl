@@ -12,7 +12,7 @@ include("explicit_filon_integral.jl")
 export explicit_filon_integral
 include("derivatives.jl")
 export general_leibniz_rule, multiple_general_leibniz_rule, exp_iωt_derivs,
-    dahlquist_derivatives, linear_ode_derivs
+    dahlquist_derivatives, linear_ode_derivs, linear_ode_derivs_hardcoded
 include("scalar_filon.jl")
 export filon_timestep
 include("hard_coded_2by2.jl")
