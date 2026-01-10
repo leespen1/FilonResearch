@@ -83,4 +83,37 @@ end
         end
     end
 
+    @testset "2x2 matrix with non-trivial time dependence" begin
+        # A(t) = [cos(t)    sin(2t)]
+        #        [t²        exp(-t)]
+        # Each entry has different time dependence, so not of form c(t)*A.
+        t = 0.7
+        u = [1.5, -0.5]
+
+        # A and its derivatives
+        A = [cos(t)      sin(2t);
+             t^2         exp(-t)]
+        Ȧ = [-sin(t)     2*cos(2t);
+             2t          -exp(-t)]
+        Ä = [-cos(t)     -4*sin(2t);
+             2           exp(-t)]
+        A_derivs = [A, Ȧ, Ä]
+
+        # Compute derivatives using the function
+        u_derivs = linear_ode_derivs(A_derivs, u)
+
+        # Manually compute expected derivatives using product rule:
+        # u̇ = A*u
+        # ü = Ȧ*u + A*u̇
+        # u⃛ = Ä*u + 2*Ȧ*u̇ + A*ü
+        u̇_expected = A * u
+        ü_expected = Ȧ * u + A * u̇_expected
+        u⃛_expected = Ä * u + 2 * Ȧ * u̇_expected + A * ü_expected
+
+        @test u_derivs[1] ≈ u atol=1e-14
+        @test u_derivs[2] ≈ u̇_expected atol=1e-14
+        @test u_derivs[3] ≈ ü_expected atol=1e-14
+        @test u_derivs[4] ≈ u⃛_expected atol=1e-14
+    end
+
 end
