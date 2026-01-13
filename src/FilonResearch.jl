@@ -3,6 +3,8 @@ module FilonResearch
 import Polynomials
 import Polynomials: Polynomial, derivative
 import LinearAlgebra: dot
+import LinearMaps: LinearMap
+import IterativeSolvers: gmres
 
 include("filon_weights.jl")
 export filon_moments, filon_weights, hardcoded_filon_weights
@@ -17,5 +19,10 @@ include("scalar_filon.jl")
 export filon_timestep
 include("hard_coded_2by2.jl")
 export filon_timestep_order2_size2, filon_order2_size2
+export filon_timestep_order4_size2, filon_order4_size2
+include("filon_timestep.jl")
+export filon_timestep_static, Algorithm1, filon_solve_static
+include("manufactured_solution.jl")
+export poly_osc_solution, poly_osc_ode_mat
 
 end # module FilonResearch

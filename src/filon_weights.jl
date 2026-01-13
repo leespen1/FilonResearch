@@ -64,6 +64,28 @@ function filon_weights(w::Real, s::Integer, a::Real=-1, b::Real=1)
 end
 
 """
+Compute the weights
+    
+    b_{k,j}(\\omega) = I_\\omega[\\ell_{k,j}] = \\int_a^b \\ell_{k,j}(x)e^{i\\omega x} dx
+
+For multiple frequencies. Store them in a vector of vectors, where the outer
+vector changes the "derivative order" j.
+"""
+function filon_weights(ωs::AbstractVector{<: Real}, s::Integer, a::Real=-1, b::Real=1)
+    nfreq = length(ωs)
+    weights_a = [zeros(ComplexF64, nfreq) for _ in 0:s]
+    weights_b = [zeros(ComplexF64, nfreq) for _ in 0:s]
+    for j in 1:nfreq 
+        scalar_weights_a, scalar_weights_b = filon_weights(ωs[j], s, a, b)
+        for i in eachindex(scalar_weights_a, scalar_weights_b, weights_a, weights_b)
+            weights_a[i][j] = scalar_weights_a[i]
+            weights_b[i][j] = scalar_weights_b[i]
+        end
+    end
+    return weights_a, weights_b
+end
+
+"""
 Generate Filon weights (on the interval [-1,1])
 """
 function hardcoded_filon_weights(w::Real, s::Integer)
