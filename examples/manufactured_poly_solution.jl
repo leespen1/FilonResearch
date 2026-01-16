@@ -34,7 +34,7 @@ for s in 0:3
         ws = fill(w, N)
         u0 = ones(N)
         true_sol = poly_osc_solution(w, degree, T)
-        sol = filon_timestep_static(A, u0, ws, 0.0, T, s)
+        sol = filon_timestep(A, u0, ws, 0.0, T, s)
         @show s degree maximum(abs, sol - true_sol)
         println()
         #println("A")
@@ -59,7 +59,7 @@ begin
     errors = Float64[]
     s=3
     for nsteps in nsteps_vec
-        sol = filon_solve_static(A, u0, ws, T, nsteps, s)[:,end]
+        sol = filon_solve(A, u0, ws, T, nsteps, s)[:,end]
         #display(hcat(sol, true_sol))
         error = sum(abs, sol - true_sol)
         push!(errors, error)

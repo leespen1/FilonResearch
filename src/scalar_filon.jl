@@ -20,7 +20,7 @@ constant in time.
 
 Order of the method will be inferred from length of λ_prev and λ_next.
 """
-function filon_timestep(λ::Union{Number, AbstractVector}, ω::Real, u_prev::Number, s::Integer, t_prev::Real, t_next::Real; rescale=false)
+function filon_timestep(λ::Union{Number, AbstractVector{<: Number}}, ω::Real, u_prev::Number, s::Integer, t_prev::Real, t_next::Real; rescale=false)
 
     u̇_prev_derivs = dahlquist_derivatives(λ, u_prev, s)
     # Use 1 in place of u_next, to get the LHS factor (...)*uₙ₊₁ = (...)*uₙ

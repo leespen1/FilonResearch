@@ -1,9 +1,56 @@
 """
+This is the best way I could think of to store A(t) and its derivatives along
+with the other problem parameters. The problem is that T is usually going to be
+a tuple of functions, which are singleton types that will make error reports
+messy.
+
+But this is the best type-stable way to do it I can think of while keeping it
+as general as possible. Issues like this are why I made the Controls interface
+in QuantumGateDesign.jl.
+"""
+struct FilonProblem{T <: Tuple}
+    u0::Vector{ComplexF64}
+    tf::Float64
+    frequencies::Vector{Float64}
+    A_deriv_funcs::T
+    function FilonProblem(u0::AbstractVector{<: Number}, tf::Real, frequencies::AbstractVector{<: Real}, A_deriv_funcs::Tuple)
+        @assert length(u0) == length(frequencies) "Must provide one frequency for each component of u0."
+        @assert all(x -> isa(x, Function), A_deriv_funcs) "Each element of A_deriv_funcs must be a function."
+        new{typeof(A_deriv_funcs)}(
+            convert(Vector{ComplexF64}, u0),
+            convert(Float64, tf),
+            convert(Vector{Float64}, frequencies),
+            A_deriv_funcs
+        )
+    end
+end
+
+"""
 Timestep the linear system of ODEs u̇ = Au using the Filon method, assuming that
 A is time-independent.
 """
-function filon_timestep_static(
+function filon_timestep(
     A::AbstractMatrix{<: Number},
+    u_n::AbstractVector{<: Number},
+    frequencies::AbstractVector{<: Number},
+    t_n::Real,
+    dt::Real,
+    s::Integer=0
+)
+    # Compute A, Ȧ, Ä, …, A⁽ˢ⁾
+    # derivatives are zero for time-independent A. For time-dependent case, just need to change A_derivs
+    A_derivs = [i == 0 ? A : zero(A) for i in 0:s]
+
+    return filon_timestep(A_derivs, A_derivs, u_n, frequencies, t_n, dt, s)
+end
+
+"""
+Timestep the linear system of ODEs u̇ = Au using the Filon method, assuming that
+A is time-independent.
+"""
+function filon_timestep(
+    A_derivs_tn::AbstractVector{<: AbstractMatrix{<: Number}},
+    A_derivs_tnp1::AbstractVector{<: AbstractMatrix{<: Number}},
     u_n::AbstractVector{<: Number},
     frequencies::AbstractVector{<: Number},
     t_n::Real,
@@ -13,9 +60,9 @@ function filon_timestep_static(
     weights_explicit, weights_implicit = filon_weights(frequencies, s, t_n, t_n+dt)
 
     N = length(u_n)
-    rhs = u_n + Algorithm1(A, u_n, frequencies, t_n, s, weights_explicit)
+    rhs = u_n + Algorithm1(A_derivs_tn, u_n, frequencies, t_n, s, weights_explicit)
     LHS = LinearMap(
-        u -> u - Algorithm1(A, u, frequencies, t_n+dt, s, weights_implicit),
+        u -> u - Algorithm1(A_derivs_tnp1, u, frequencies, t_n+dt, s, weights_implicit),
         N, N
     )
     u_np1 = gmres(LHS, rhs)
@@ -25,16 +72,14 @@ end
 
 # TODO Rename this to something more descriptive!
 function Algorithm1(
-    A::AbstractMatrix{<: Number},
+    A_derivs::AbstractVector,
     u::AbstractVector{<: Number},
     frequencies::AbstractVector{<: Real},
     t::Real,
     s::Integer,
     weights::AbstractVector{<: AbstractVector{<: Number}},
 )
-    # Compute A, Ȧ, Ä, …, A⁽ˢ⁾
-    # derivatives are zero for time-independent A. For time-dependent case, just need to change A_derivs
-    A_derivs = [i == 0 ? A : zero(A) for i in 0:s]
+    @assert all(A -> hasmethod(*, (typeof(A), typeof(u))), A_derivs) "Type of A_derivs does not support `*` operation with type of u. (typeof(A_derivs)=$(typeof(A_derivs)), typeof(u)=$(typeof(u)))" 
     # Compute u̇, ü, …, u⁽ˢ⁺ʲ⁾ (necessary for computing f and its derivatives)
     u_derivs = linear_ode_derivs(A_derivs, u, s)
     # XXX Note the *negative* frequencies, since we are *inverting* the frequency
@@ -53,7 +98,7 @@ function Algorithm1(
 end
 
     
-function filon_solve_static(
+function filon_solve(
     A::AbstractMatrix{<: Number},
     u0::AbstractVector{<: Number},
     frequencies::AbstractVector{<: Number},
@@ -67,9 +112,54 @@ function filon_solve_static(
     u_n = u0
     for n in 1:nsteps
         t_n = (n-1)*dt
-        u_np1 = filon_timestep_static(A, u_n, frequencies, t_n, dt, s)
+        u_np1 = filon_timestep(A, u_n, frequencies, t_n, dt, s)
         sol = hcat(sol, u_np1)
         u_n = u_np1
     end
     return sol
 end
+
+function filon_solve(
+    A_deriv_funcs::Tuple,
+    u0::AbstractVector{<: Number},
+    frequencies::AbstractVector{<: Number},
+    T::Real,
+    nsteps::Integer,
+    s::Integer=0
+)
+    @assert length(A_deriv_funcs) >= s "Must provide at least s=$s derivatives in A_deriv_funcs."
+    @assert all(x -> isa(x, Function), A_deriv_funcs) "Each element of A_deriv_funcs must be a function."
+    dt = T / nsteps
+    sol = hcat(u0) # TODO: this will be type-unstable if u0 is not Vector{ComplexF64}
+
+    u_n = u0
+    for n in 1:nsteps
+        t_n = (n-1)*dt
+        A_derivs_tn = [f(t_n) for f in A_deriv_funcs]
+        A_derivs_tnp1 = [f(t_n+dt) for f in A_deriv_funcs]
+        u_np1 = filon_timestep(A_derivs_tn, A_derivs_tnp1, u_n, frequencies, t_n, dt, s)
+        sol = hcat(sol, u_np1)
+        u_n = u_np1
+    end
+    return sol
+
+end
+
+function filon_solve(
+    prob::FilonProblem,
+    nsteps::Integer,
+    s::Integer=0
+)
+    return filon_solve(
+        prob.A_deriv_funcs,
+        prob.u0,
+        prob.frequencies,
+        prob.T,
+        nsteps,
+        s
+    )
+end
+
+
+
+
