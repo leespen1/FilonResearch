@@ -46,4 +46,19 @@ num_sol = filon_solve(A_derivs, y0, frequencies, T, pl_nsteps, s)[1,:]
 plot!(pl, pl_ts, real.(num_sol), label="Numerical Sol")
 display(pl)
 
+# Part 2 - controlled operator framework works.
+operators = [ComplexF64[1;;], ComplexF64[1;;]]
+op_A_derivs = (
+            ControlledFunctionOp(operators, (t -> α, t -> β*ω*cos(ω*t))),
+            ControlledFunctionOp(operators, (t -> 0, t -> -β*ω^2*sin(ω*t))),
+            ControlledFunctionOp(operators, (t -> 0, t -> -β*ω^3*cos(ω*t))),
+            ControlledFunctionOp(operators, (t -> 0, t -> β*ω^4*sin(ω*t))),
+            ControlledFunctionOp(operators, (t -> 0, t -> β*ω^5*cos(ω*t))),
+)
+
+
+cmp_nsteps = 1000
+num_sol_1 = filon_solve(A_derivs, y0, frequencies, T, cmp_nsteps, s)
+num_sol_2 = filon_solve(op_A_derivs, y0, frequencies, T, cmp_nsteps, s)
+@show maximum(abs, num_sol_1 .- num_sol_2)
 

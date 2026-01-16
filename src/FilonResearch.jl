@@ -25,6 +25,6 @@ export filon_timestep, Algorithm1, filon_solve
 include("manufactured_solution.jl")
 export poly_osc_solution, poly_osc_ode_mat
 include("controlled_operators.jl")
-export ControlledFunctionOp
+export ControlledFunctionOp, ControlledOp
 
 end # module FilonResearch

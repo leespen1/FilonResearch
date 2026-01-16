@@ -49,8 +49,8 @@ Timestep the linear system of ODEs u̇ = Au using the Filon method, assuming tha
 A is time-independent.
 """
 function filon_timestep(
-    A_derivs_tn::AbstractVector{<: AbstractMatrix{<: Number}},
-    A_derivs_tnp1::AbstractVector{<: AbstractMatrix{<: Number}},
+    A_derivs_tn::Union{AbstractVector, Tuple},
+    A_derivs_tnp1::Union{AbstractVector, Tuple},
     u_n::AbstractVector{<: Number},
     frequencies::AbstractVector{<: Number},
     t_n::Real,
@@ -72,7 +72,7 @@ end
 
 # TODO Rename this to something more descriptive!
 function Algorithm1(
-    A_derivs::AbstractVector,
+    A_derivs::Union{AbstractVector, Tuple},
     u::AbstractVector{<: Number},
     frequencies::AbstractVector{<: Real},
     t::Real,

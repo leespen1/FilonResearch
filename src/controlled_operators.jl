@@ -11,6 +11,9 @@ struct ControlledOp
     end
 end
 
+function Base.:*(scalar::Real, controlled_op::ControlledOp)
+    return ControlledOp(controlled_op.operators, controlled_op.coefficients .* scalar)
+end
 
 function Base.:*(a::ControlledOp, b::AbstractVector{<: Number})
     return sum(
