@@ -154,7 +154,7 @@ function filon_solve(
         prob.A_deriv_funcs,
         prob.u0,
         prob.frequencies,
-        prob.T,
+        prob.tf,
         nsteps,
         s
     )

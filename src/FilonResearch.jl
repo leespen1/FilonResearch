@@ -21,7 +21,7 @@ include("hard_coded_2by2.jl")
 export filon_timestep_order2_size2, filon_order2_size2
 export filon_timestep_order4_size2, filon_order4_size2
 include("filon_timestep.jl")
-export filon_timestep, Algorithm1, filon_solve
+export filon_timestep, Algorithm1, filon_solve, FilonProblem
 include("manufactured_solution.jl")
 export poly_osc_solution, poly_osc_ode_mat
 include("controlled_operators.jl")

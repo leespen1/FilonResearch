@@ -2,12 +2,13 @@
 Type for faciliting operations of the type
     c₁*A₁ + c₂*A₂ + …
 """
-struct ControlledOp
-    operators::Vector{Matrix{ComplexF64}} 
+struct ControlledOp{T <: Union{Tuple, AbstractVector}}
+    operators::T
     coefficients::Vector{ComplexF64}
-    function ControlledOp(operators, coefficients)
+    function ControlledOp(operators::T, coefficients::AbstractVector{<: Number}) where {T <: Union{Tuple, AbstractVector}}
         @assert length(operators) == length(coefficients) "Must provide one coefficient for each operator."
-        new(operators, coefficients)
+        @assert all(x -> hasmethod(*, (typeof(x), Vector{ComplexF64})), operators) "Each operator in operators must be able to multiple a Vector{ComplexF64}"
+        new{T}(operators, convert(Vector{ComplexF64}, coefficients))
     end
 end
 
@@ -37,14 +38,14 @@ returns isntances of ControlledOp, which represents
     c₁(t)*A₁ + c₂(t)*A₂ + …
 for a particular value of t.
 """
-struct ControlledFunctionOp{T <: Tuple} <: Function
-    operators::Vector{Matrix{ComplexF64}} 
-    coefficient_functions::T
-    function ControlledFunctionOp(operators::Vector{Matrix{ComplexF64}}, coefficient_functions::Tuple)
+struct ControlledFunctionOp{T1 <: Union{Tuple, AbstractVector}, T2 <: Tuple} <: Function
+    operators::T1 
+    coefficient_functions::T2
+    function ControlledFunctionOp(operators::T1, coefficient_functions::T2) where {T1 <: Union{Tuple, AbstractVector}, T2 <: Tuple}
         @assert length(operators) == length(coefficient_functions) "Must provide one function for each operator."
         @assert all(x -> isa(x, Function), coefficient_functions) "Each element of A_deriv_funcs must be a function."
         @assert all(x -> hasmethod(x, (Float64,)), coefficient_functions) "Each function `f` in A_deriv_funcs must have a method `f(t::Float64)` defined."
-        new{typeof(coefficient_functions)}(operators, coefficient_functions)
+        new{T1, T2}(operators, coefficient_functions)
     end
 end
 
