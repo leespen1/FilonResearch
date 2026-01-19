@@ -35,13 +35,15 @@ function filon_timestep(
     frequencies::AbstractVector{<: Number},
     t_n::Real,
     dt::Real,
-    s::Integer=0
+    s::Integer=0,
+    ;
+    rescale::Bool=true
 )
     # Compute A, Ȧ, Ä, …, A⁽ˢ⁾
     # derivatives are zero for time-independent A. For time-dependent case, just need to change A_derivs
     A_derivs = [i == 0 ? A : zero(A) for i in 0:s]
 
-    return filon_timestep(A_derivs, A_derivs, u_n, frequencies, t_n, dt, s)
+    return filon_timestep(A_derivs, A_derivs, u_n, frequencies, t_n, dt, s, rescale=rescale)
 end
 
 """
@@ -55,9 +57,22 @@ function filon_timestep(
     frequencies::AbstractVector{<: Number},
     t_n::Real,
     dt::Real,
-    s::Integer=0
+    s::Integer=0,
+    ;
+    rescale::Bool=true
+    
 )
-    weights_explicit, weights_implicit = filon_weights(frequencies, s, t_n, t_n+dt)
+    if rescale
+        modified_frequencies = frequencies .* (0.5*dt)
+        weights_explicit, weights_implicit = filon_weights(modified_frequencies, s, -1, 1)
+        for i in eachindex(weights_explicit, weights_implicit)
+            j = i-1
+            weights_explicit[i] .*= cis.(frequencies .* (t_n+0.5*dt)) .* (0.5*dt)^(j+1)
+            weights_implicit[i] .*= cis.(frequencies .* (t_n+0.5*dt)) .* (0.5*dt)^(j+1)
+        end
+    else
+        weights_explicit, weights_implicit = filon_weights(frequencies, s, t_n, t_n+dt)
+    end
 
     N = length(u_n)
     rhs = u_n + Algorithm1(A_derivs_tn, u_n, frequencies, t_n, s, weights_explicit)
@@ -104,7 +119,9 @@ function filon_solve(
     frequencies::AbstractVector{<: Number},
     T::Real,
     nsteps::Integer,
-    s::Integer=0
+    s::Integer=0,
+    ;
+    rescale::Bool=true
 )
     dt = T / nsteps
     sol = hcat(u0)
@@ -112,7 +129,7 @@ function filon_solve(
     u_n = u0
     for n in 1:nsteps
         t_n = (n-1)*dt
-        u_np1 = filon_timestep(A, u_n, frequencies, t_n, dt, s)
+        u_np1 = filon_timestep(A, u_n, frequencies, t_n, dt, s, rescale=rescale)
         sol = hcat(sol, u_np1)
         u_n = u_np1
     end
@@ -126,6 +143,8 @@ function filon_solve(
     T::Real,
     nsteps::Integer,
     s::Integer=0
+    ;
+    rescale::Bool=true
 )
     @assert length(A_deriv_funcs) >= s "Must provide at least s=$s derivatives in A_deriv_funcs."
     @assert all(x -> isa(x, Function), A_deriv_funcs) "Each element of A_deriv_funcs must be a function."
@@ -137,7 +156,7 @@ function filon_solve(
         t_n = (n-1)*dt
         A_derivs_tn = [f(t_n) for f in A_deriv_funcs]
         A_derivs_tnp1 = [f(t_n+dt) for f in A_deriv_funcs]
-        u_np1 = filon_timestep(A_derivs_tn, A_derivs_tnp1, u_n, frequencies, t_n, dt, s)
+        u_np1 = filon_timestep(A_derivs_tn, A_derivs_tnp1, u_n, frequencies, t_n, dt, s, rescale=rescale)
         sol = hcat(sol, u_np1)
         u_n = u_np1
     end
@@ -148,7 +167,9 @@ end
 function filon_solve(
     prob::FilonProblem,
     nsteps::Integer,
-    s::Integer=0
+    s::Integer=0,
+    ;
+    rescale::Bool=true
 )
     return filon_solve(
         prob.A_deriv_funcs,
@@ -156,7 +177,8 @@ function filon_solve(
         prob.frequencies,
         prob.tf,
         nsteps,
-        s
+        s,
+        rescale=rescale
     )
 end
 

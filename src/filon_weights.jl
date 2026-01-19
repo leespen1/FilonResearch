@@ -14,8 +14,8 @@ function filon_moments(degree::Integer, w::Real, a::Real=-1, b::Real=1)
             moments[1+n] = (b^(n+1) - a^(n+1)) / (n+1)
         end
     else
-        exp_a = exp(im*w*a)
-        exp_b = exp(im*w*b)
+        exp_a = cis(w*a)
+        exp_b = cis(w*b)
 
         moments[1] = (-im/w)*(exp_b - exp_a)
         for n in 1:degree
