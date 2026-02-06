@@ -5,44 +5,62 @@ Numerical experiments on the Dahlquist equation:
 
 with the ansatz u(t) = f(t)e^(iωt).
 
-Three cases of interest:
-1. On resonance: λ = iω
-2. Off resonance: λ = iω̃ ≠ iω, |ω - ω̃| ≪ 1
-3. Off resonance and damped: λ = iω̃ - κ, |κ/ω̃| ≪ 1, κ > 0
+λ is fixed (λ = 10i) and ω (the ansatz frequency) is varied:
+1. On resonance: ω = Im(λ)
+2. Off resonance: ω = Im(λ) + Δω
+3. Off resonance and damped: λ → λ - κ, ω = Im(λ) + Δω
 """
 
 using FilonResearch
-using Plots
+using CairoMakie
+using LaTeXStrings
 using Printf
+
+CairoMakie.set_theme!(CairoMakie.theme_latexfonts())
 
 # Exact solution for the Dahlquist equation
 dahlquist_exact(λ, u₀, t) = u₀ * exp(λ * t)
 
 """
 Solve the Dahlquist equation using the Filon method with nsteps timesteps.
-Returns the solution at time tf.
+Returns the full trajectory as (times, solutions).
 """
 function filon_dahlquist(λ, ω, s, nsteps, tf, u₀; rescale=true)
     dt = tf / nsteps
     u = ComplexF64(u₀)
+    times = Vector{Float64}(undef, nsteps + 1)
+    sols = Vector{ComplexF64}(undef, nsteps + 1)
+    times[1] = 0.0
+    sols[1] = u
     for n in 1:nsteps
         t_n = (n - 1) * dt
         t_np1 = n * dt
         u = filon_timestep(λ, ω, u, s, t_n, t_np1; rescale=rescale)
+        times[n + 1] = t_np1
+        sols[n + 1] = u
     end
-    return u
+    return times, sols
 end
 
 """
-Run a convergence study: compute errors for a range of nsteps values.
+Compute the discrete L2 norm of the error over [0, tf].
+Uses ||e||_h = √(h ∑ᵢ |eᵢ|²) where h = Δt is the grid spacing.
+"""
+function l2_error(times, sols, λ, u₀)
+    exact = [dahlquist_exact(λ, u₀, t) for t in times]
+    h = times[2] - times[1]
+    return sqrt(h * sum(abs2, sols .- exact))
+end
+
+"""
+Run a convergence study: compute L2 errors for a range of nsteps values.
 Returns (nsteps_vec, errors).
 """
 function convergence_study(λ, ω, s, u₀, tf, nsteps_range; rescale=true)
-    u_exact = dahlquist_exact(λ, u₀, tf)
     errors = Float64[]
     for nsteps in nsteps_range
-        u_numerical = filon_dahlquist(λ, ω, s, nsteps, tf, u₀; rescale=rescale)
-        push!(errors, abs(u_numerical - u_exact))
+        times, sols = filon_dahlquist(λ, ω, s, nsteps, tf, u₀; rescale=rescale)
+        push!(errors, l2_error(times, sols, λ, u₀))
     end
     return collect(nsteps_range), errors
 end
@@ -51,145 +69,188 @@ end
 # Main experiment parameters
 # =============================================================================
 
-ω = 10.0                    # Ansatz frequency
-tf = 10.0                   # Final time
+λ = 10.0im                  # System eigenvalue (fixed)
+tf = 2.5pi                     # Final time
 u₀ = 1.0 + 0.0im            # Initial condition
 nsteps_range = [2^k for k in 1:12]  # Number of timesteps
-s_values = 0:2              # Orders to test
+s_values = 0:3              # Orders to test
 
-# Consistent styling: color distinguishes s
-s_colors = [:blue, :red, :green]
+colors = Makie.wong_colors()
 
 println("=" ^ 70)
 println("Dahlquist Equation Experiments")
 println("=" ^ 70)
-println("Ansatz frequency ω = $ω")
+println("System eigenvalue λ = $λ")
 println("Final time tf = $tf")
 println("Initial condition u₀ = $u₀")
 println()
 
+inch = 96  # points per inch
+fig = Figure(size=(6.5inch, 6.5inch), fontsize=12)
+
+# Main title
+tf_over_pi = tf / π
+tf_str = isinteger(tf_over_pi) ? "$(Int(tf_over_pi))\\pi" : "$(tf_over_pi)\\pi"
+Label(fig[0, 1:3], L"\textbf{Filon Method on } du/dt = \lambda u \textbf{ with ansatz } u(t) = f(t)e^{i\omega t}, \quad 0 \leq t \leq %$(tf_str)",
+    fontsize=16, padding=(0, 0, 0, 0))
+#rowgap!(fig.layout, 1, 5)
+
 # =============================================================================
-# Case 1: On resonance (λ = iω)
+# Case 1: On resonance (ω = Im(λ))
 # =============================================================================
 
 println("-" ^ 70)
-println("Case 1: On resonance (λ = iω)")
+println("On resonance (ω = Im(λ))")
 println("-" ^ 70)
 
-λ_resonance = im * ω
+ω_resonance = imag(λ)
 
-println("λ = $(λ_resonance)")
-println("Expected: Exact solution for all s (method is exact when λ = iω)")
+println("λ = $λ, ω = $ω_resonance")
+println("Expected: Exact solution for all s (method is exact when ω = Im(λ))")
 println()
 
-p1 = plot(title="Case 1: On resonance (λ = iω)",
-          xlabel="Number of timesteps",
-          ylabel="Error |u_numerical - u_exact|",
-          xscale=:log10, yscale=:log10,
-          legend=:topright)
+ax1 = Axis(fig[1, 1],
+    title=L"\lambda = %$(Int(imag(λ)))i, \quad \omega = %$(Int(imag(λ)))",
+    titlegap=10,
+    xlabel="Number of Timesteps",
+    ylabel=L"L^2 \textrm{ Error}",
+    xscale=log10, yscale=log10)
 
 for (i, s) in enumerate(s_values)
-    nsteps_vec, errors = convergence_study(λ_resonance, ω, s, u₀, tf, nsteps_range)
-    # Handle zero/near-zero errors for plotting
+    nsteps_vec, errors = convergence_study(λ, ω_resonance, s, u₀, tf, nsteps_range)
     errors_plot = max.(errors, 1e-16)
-    plot!(p1, nsteps_vec, errors_plot, marker=:circle, color=s_colors[i],
-          linestyle=:solid, label="s=$s")
+    scatterlines!(ax1, nsteps_vec, errors_plot, color=colors[i],
+        marker=:circle)
     @printf("  s=%d: max error = %.2e, min error = %.2e\n", s, maximum(errors), minimum(errors))
 end
 println()
 
 # =============================================================================
-# Case 2: Off resonance (λ = iω̃, |ω - ω̃| ≪ 1)
+# Case 2: Off resonance (ω = Im(λ) + Δω)
 # =============================================================================
 
 println("-" ^ 70)
-println("Case 2: Off resonance (λ = iω̃, |ω - ω̃| ≪ 1)")
+println("Off resonance (ω = Im(λ) + Δω)")
 println("-" ^ 70)
 
 detunings = [0.1, 0.01, 0.001]
-Δω_markers = [:circle, :square, :diamond]
+detunings_damped = [0.1, 0.01, 0.001]
+markers = [:circle, :rect, :diamond]
+markers_damped = [:circle, :rect, :diamond]
 
-p2 = plot(title="Case 2: Off resonance (λ = iω̃)",
-          xlabel="Number of timesteps",
-          ylabel="Error |u_numerical - u_exact|",
-          xscale=:log10, yscale=:log10,
-          legend=:outerright)
+ax2 = Axis(fig[1, 2],
+    title=L"\lambda = %$(Int(imag(λ)))i, \quad \omega = %$(Int(imag(λ))) + \Delta\omega",
+    titlegap=10,
+    xlabel="Number of Timesteps",
+    yticklabelsvisible=false,
+    xscale=log10, yscale=log10)
 
 for (j, Δω) in enumerate(detunings)
-    ω̃ = ω + Δω
-    λ_offresonance = im * ω̃
-    println("Detuning Δω = $Δω (ω̃ = $ω̃, λ = $(λ_offresonance))")
+    ω_off = imag(λ) + Δω
+    println("Detuning Δω = $Δω (ω = $ω_off)")
 
     for (i, s) in enumerate(s_values)
-        nsteps_vec, errors = convergence_study(λ_offresonance, ω, s, u₀, tf, nsteps_range)
+        nsteps_vec, errors = convergence_study(λ, ω_off, s, u₀, tf, nsteps_range)
         @printf("  s=%d: max error = %.2e, min error = %.2e\n",
                 s, maximum(errors), minimum(errors))
-        plot!(p2, nsteps_vec, errors, marker=Δω_markers[j], color=s_colors[i],
-              linestyle=:solid, label="Δω=$Δω, s=$s")
+        scatterlines!(ax2, nsteps_vec, errors, color=colors[i],
+            marker=markers[j])
     end
     println()
 end
 
-# Reference lines for convergence orders (shifted down)
-plot!(p2, nsteps_range, 1e1 ./ (nsteps_range.^2),
-      label="O(n⁻²)", linestyle=:dot, color=:gray, linewidth=2)
-plot!(p2, nsteps_range, 1e-1 ./ (nsteps_range.^4),
-      label="O(n⁻⁴)", linestyle=:dash, color=:gray, linewidth=2)
-plot!(p2, nsteps_range, 1e-3 ./ (nsteps_range.^6),
-      label="O(n⁻⁶)", linestyle=:dashdot, color=:gray, linewidth=2)
+# Reference lines (all dotted grey)
+lines!(ax2, nsteps_range, 1e1 ./ (nsteps_range .^ 2),
+    linestyle=:dot, color=:gray, linewidth=2)
+lines!(ax2, nsteps_range, 1e-1 ./ (nsteps_range .^ 4),
+    linestyle=:dot, color=:gray, linewidth=2)
+lines!(ax2, nsteps_range, 1e-3 ./ (nsteps_range .^ 6),
+    linestyle=:dot, color=:gray, linewidth=2)
+lines!(ax2, nsteps_range, 1e-5 ./ (nsteps_range .^ 8),
+    linestyle=:dot, color=:gray, linewidth=2)
 
 # =============================================================================
-# Case 3: Off resonance and damped (λ = iω̃ - κ, κ > 0)
+# Case 3: Off resonance and damped (λ → λ - κ, ω = Im(λ) + Δω)
 # =============================================================================
 
 println("-" ^ 70)
-println("Case 3: Off resonance and damped (λ = iω̃ - κ)")
+println("Off resonance and damped (λ → λ - κ)")
 println("-" ^ 70)
 
-# Test with small damping: |κ/ω̃| ≪ 1
-κ = 0.1
+κ = 0.01
+λ_damped = λ - κ
 
-p3 = plot(title="Case 3: Off resonance and damped (κ=$κ)",
-          xlabel="Number of timesteps",
-          ylabel="Error |u_numerical - u_exact|",
-          xscale=:log10, yscale=:log10,
-          legend=:outerright)
+ax3 = Axis(fig[2, 1:2],
+    title=L"\lambda = %$(Int(imag(λ)))i - %$(κ), \quad \omega = %$(Int(imag(λ))) + \Delta\omega",
+    titlegap=10,
+    xlabel="Number of Timesteps",
+    ylabel=L"L^2 \textrm{ Error}",
+    xscale=log10, yscale=log10)
 
-for (j, Δω) in enumerate(detunings)
-    ω̃ = ω + Δω
-    λ_damped = im * ω̃ - κ
-    println("κ = $κ, Δω = $Δω (ω̃ = $ω̃, λ = $(λ_damped), κ/ω̃ = $(κ/ω̃))")
+for (j, Δω) in enumerate(detunings_damped)
+    ω_off = imag(λ) + Δω
+    println("κ = $κ, Δω = $Δω (λ = $λ_damped, ω = $ω_off)")
 
     for (i, s) in enumerate(s_values)
-        nsteps_vec, errors = convergence_study(λ_damped, ω, s, u₀, tf, nsteps_range)
+        nsteps_vec, errors = convergence_study(λ_damped, ω_off, s, u₀, tf, nsteps_range)
         @printf("  s=%d: max error = %.2e, min error = %.2e\n",
                 s, maximum(errors), minimum(errors))
-        plot!(p3, nsteps_vec, errors, marker=Δω_markers[j], color=s_colors[i],
-              linestyle=:solid, label="Δω=$Δω, s=$s")
+        scatterlines!(ax3, nsteps_vec, errors, color=colors[i],
+            marker=markers_damped[j])
     end
     println()
 end
 
-# Reference lines (shifted down)
-plot!(p3, nsteps_range, 1e1 ./ (nsteps_range.^2),
-      label="O(n⁻²)", linestyle=:dot, color=:gray, linewidth=2)
-plot!(p3, nsteps_range, 1e-1 ./ (nsteps_range.^4),
-      label="O(n⁻⁴)", linestyle=:dash, color=:gray, linewidth=2)
-plot!(p3, nsteps_range, 1e-3 ./ (nsteps_range.^6),
-      label="O(n⁻⁶)", linestyle=:dashdot, color=:gray, linewidth=2)
+# Reference lines (all dotted grey)
+lines!(ax3, nsteps_range, 1e1 ./ (nsteps_range .^ 2),
+    linestyle=:dot, color=:gray, linewidth=2)
+lines!(ax3, nsteps_range, 1e-1 ./ (nsteps_range .^ 4),
+    linestyle=:dot, color=:gray, linewidth=2)
+lines!(ax3, nsteps_range, 1e-3 ./ (nsteps_range .^ 6),
+    linestyle=:dot, color=:gray, linewidth=2)
+lines!(ax3, nsteps_range, 1e-5 ./ (nsteps_range .^ 8),
+    linestyle=:dot, color=:gray, linewidth=2)
+
+# Apply shared y-limits across all axes
+ylims!(ax1, (1e-15, 1e0))
+ylims!(ax2, (1e-15, 1e0))
+ylims!(ax3, (1e-15, 1e0))
+
+rowsize!(fig.layout, 1, Relative(2/5))
+rowsize!(fig.layout, 2, Relative(3/5))
+colsize!(fig.layout, 1, Auto(1))
+colsize!(fig.layout, 2, Auto(2))
 
 # =============================================================================
-# Summary plot
+# Shared legend (for Cases 2 & 3)
+# =============================================================================
+
+s_entries = [PolyElement(color=colors[i]) for (i, _) in enumerate(s_values)]
+s_labels = ["s=$s" for s in s_values]
+
+marker_entries = [MarkerElement(color=:black, marker=m, markersize=12) for m in markers]
+Δω_labels = ["Δω=$Δω" for Δω in detunings]
+
+ref_entries = [LineElement(color=:gray, linestyle=:dot, linewidth=2) for _ in 1:4]
+ref_labels = [L"O(\Delta t^2)", L"O(\Delta t^4)", L"O(\Delta t^6)", L"O(\Delta t^8)"]
+
+Legend(fig[1:2, 3],
+    [s_entries, marker_entries, ref_entries],
+    [s_labels, Δω_labels, ref_labels],
+    ["Order s", "Δω", "Reference"])
+
+# =============================================================================
+# Save
 # =============================================================================
 
 println("=" ^ 70)
 println("Generating summary plot...")
 println("=" ^ 70)
 
-summary_plot = plot(p1, p2, p3, layout=@layout([a b; c]), size=(1200, 800))
-
-savefig(summary_plot, joinpath(@__DIR__, "..", "Plots", "dahlquist_experiments.png"))
+mkpath(joinpath(@__DIR__, "..", "Plots"))
+save(joinpath(@__DIR__, "..", "Plots", "dahlquist_experiments.png"), fig)
+save(joinpath(@__DIR__, "..", "Plots", "dahlquist_experiments.svg"), fig)
+save(joinpath(@__DIR__, "..", "Plots", "dahlquist_experiments.pdf"), fig)
 println("Saved figure to Plots/dahlquist_experiments.png")
 
-# Display individual plots if running interactively
-display(summary_plot)
+display(fig)
