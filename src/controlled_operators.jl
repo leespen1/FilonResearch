@@ -1,6 +1,10 @@
 """
 Type for faciliting operations of the type
     c₁*A₁ + c₂*A₂ + …
+
+Note: may be type-unstable when using tuple of operators (because tuples can
+be heterogeneous). But perhaps it is okay, as long as the compiler can figure
+out reasonable output types.
 """
 struct ControlledOp{T <: Union{Tuple, AbstractVector}}
     operators::T
@@ -16,17 +20,18 @@ function Base.:*(scalar::Real, controlled_op::ControlledOp)
     return ControlledOp(controlled_op.operators, controlled_op.coefficients .* scalar)
 end
 
+# Note: this may be type-unstable because a.operators 
 function Base.:*(a::ControlledOp, b::AbstractVector{<: Number})
     return sum(
-        a.coefficients[i] * (a.operators[i] * b)
-        for i in eachindex(a.coefficients, a.operators)
+        coeff * (op * b)
+        for (coeff, op) in zip(a.coefficients, a.operators)
     )
 end
 
 function full_op(a::ControlledOp)
     return sum(
-        a.coefficients[i] * a.operators[i]
-        for i in eachindex(a.coefficients, a.operators)
+        coeff * op
+        for (coeff, op) in zip(a.coefficients, a.operators)
     )
 end
 

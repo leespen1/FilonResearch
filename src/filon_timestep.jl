@@ -34,7 +34,7 @@ function filon_timestep(
     u_n::AbstractVector{<: Number},
     frequencies::AbstractVector{<: Number},
     t_n::Real,
-    dt::Real,
+    t_np1::Real,
     s::Integer=0,
     ;
     rescale::Bool=true
@@ -43,7 +43,7 @@ function filon_timestep(
     # derivatives are zero for time-independent A. For time-dependent case, just need to change A_derivs
     A_derivs = [i == 0 ? A : zero(A) for i in 0:s]
 
-    return filon_timestep(A_derivs, A_derivs, u_n, frequencies, t_n, dt, s, rescale=rescale)
+    return filon_timestep(A_derivs, A_derivs, u_n, frequencies, t_n, t_np1, s, rescale=rescale)
 end
 
 """
@@ -56,12 +56,13 @@ function filon_timestep(
     u_n::AbstractVector{<: Number},
     frequencies::AbstractVector{<: Number},
     t_n::Real,
-    dt::Real,
+    t_np1::Real,
     s::Integer=0,
     ;
     rescale::Bool=true
-    
 )
+    dt = t_np1 - t_n
+
     if rescale
         modified_frequencies = frequencies .* (0.5*dt)
         weights_explicit, weights_implicit = filon_weights(modified_frequencies, s, -1, 1)
@@ -71,16 +72,16 @@ function filon_timestep(
             weights_implicit[i] .*= cis.(frequencies .* (t_n+0.5*dt)) .* (0.5*dt)^(j+1)
         end
     else
-        weights_explicit, weights_implicit = filon_weights(frequencies, s, t_n, t_n+dt)
+        weights_explicit, weights_implicit = filon_weights(frequencies, s, t_n, t_np1)
     end
 
     N = length(u_n)
     rhs = u_n + Algorithm1(A_derivs_tn, u_n, frequencies, t_n, s, weights_explicit)
     LHS = LinearMap(
-        u -> u - Algorithm1(A_derivs_tnp1, u, frequencies, t_n+dt, s, weights_implicit),
+        u -> u - Algorithm1(A_derivs_tnp1, u, frequencies, t_np1, s, weights_implicit),
         N, N
     )
-    u_np1 = gmres(LHS, rhs)
+    u_np1 = gmres(LHS, rhs, abstol=1e-15, reltol=1e-15)
     return u_np1
 end
 
@@ -129,7 +130,8 @@ function filon_solve(
     u_n = u0
     for n in 1:nsteps
         t_n = (n-1)*dt
-        u_np1 = filon_timestep(A, u_n, frequencies, t_n, dt, s, rescale=rescale)
+        t_np1 = n*dt
+        u_np1 = filon_timestep(A, u_n, frequencies, t_n, t_np1, s, rescale=rescale)
         sol = hcat(sol, u_np1)
         u_n = u_np1
     end
@@ -154,9 +156,10 @@ function filon_solve(
     u_n = u0
     for n in 1:nsteps
         t_n = (n-1)*dt
+        t_np1 = n*dt
         A_derivs_tn = [f(t_n) for f in A_deriv_funcs]
-        A_derivs_tnp1 = [f(t_n+dt) for f in A_deriv_funcs]
-        u_np1 = filon_timestep(A_derivs_tn, A_derivs_tnp1, u_n, frequencies, t_n, dt, s, rescale=rescale)
+        A_derivs_tnp1 = [f(t_np1) for f in A_deriv_funcs]
+        u_np1 = filon_timestep(A_derivs_tn, A_derivs_tnp1, u_n, frequencies, t_n, t_np1, s, rescale=rescale)
         sol = hcat(sol, u_np1)
         u_n = u_np1
     end
