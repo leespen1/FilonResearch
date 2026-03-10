@@ -200,12 +200,17 @@ A_deriv_funcs = ntuple(
 
 s_filon = 0
 s_hermite = 2
-#frequencies = zeros(div(rot_prob.real_system_size, 2))
-frequencies = -1 .* Array(diag(rot_prob.system_sym))
+frequencies = zeros(div(rot_prob.real_system_size, 2))
+#frequencies = -1 .* Array(diag(rot_prob.system_sym))
 # Try solving with filon and hermite. But use zero frequencies for filon, which should make it mathematically equivalent to hermite.
 initial_cond = 4 # The fourth initial condition has phase dynamics, even with no control
 f_hist = filon_solve(A_deriv_funcs, U0[:,initial_cond], frequencies, Tmax, nsteps, s_filon)
-h_hist = eval_forward(rot_prob, rot_controls, pcof, order=2*(s_hermite+1))[:,:,initial_cond]
+h_hist = eval_forward(
+    QuantumGateDesign.VectorSchrodingerProb(rot_prob, initial_cond),
+    rot_controls,
+    pcof,
+    order=2*(s_hermite+1)
+)
 
 @show norm(f_hist[:,end] - h_hist[:,end])
 @show norm(f_hist - h_hist)
