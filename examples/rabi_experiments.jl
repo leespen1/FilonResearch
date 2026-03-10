@@ -118,7 +118,7 @@ Compute a saturated Filon-based reference solution by doubling nsteps until conv
 Returns (nsteps_ref, sol_ref) where sol_ref is a (d × nsteps_ref+1) matrix.
 """
 function saturated_lab_reference(A_deriv_funcs, u0, frequencies, tf, s_ref;
-                                  nsteps_start=2^14, nsteps_max=2^20, tol=1e-13)
+                                  nsteps_start=2^14, nsteps_max=2^20, tol=1e-10)
     nsteps_prev = nsteps_start
     sol_prev = lab_reference_filon(A_deriv_funcs, u0, frequencies, tf, nsteps_prev, s_ref)
 
@@ -164,23 +164,26 @@ end
 # Main experiment parameters
 # =============================================================================
 
-ω₀ = 10.0           # Atomic transition frequency
-ω = 10.0            # Drive frequency (on resonance: ω = ω₀)
+ω₀ = 100.0           # Atomic transition frequency
+ω = 100.0            # Drive frequency (on resonance: ω = ω₀)
 Δ = ω₀ - ω          # Detuning
-Ω = 1.0             # Rabi frequency (coupling strength)
+Ω = 0.1            # Rabi frequency (coupling strength)
 
-# Initial state: ground state
+# Initial state: excited state
 u0 = ComplexF64[0.0, 1.0]
 
 # Ansatz frequencies for Filon method (energy eigenvalues of free Hamiltonian)
-frequencies_lab = [ω₀/2, -ω₀/2]
+frequencies_lab = -1 .* [ω₀/2, -ω₀/2]
 frequencies_rot = [0.0, 0.0]  # In rotating frame, effectively removed fast oscillation
 
 # Time parameters
-n_periods = 5.5                    # Number of Rabi periods
-Ω_eff = sqrt(Δ^2 + Ω^2)          # Generalized Rabi frequency
-T_rabi = 2π / Ω_eff              # Rabi period
-tf = n_periods * T_rabi          # Final time
+T_lab = 2pi / (ω₀/2)
+Ω_eff = sqrt(Δ^2 + Ω^2)         # Generalized Rabi frequency
+T_rabi = 2π / Ω_eff             # Rabi period
+
+n_periods = 25.5                 # Number of Rabi periods
+tf = n_periods * T_lab          # Final time
+
 
 s_values = 0:3
 use_l2_error = false # false for final-time error only
@@ -196,7 +199,8 @@ println("Δ = $Δ (detuning)")
 println("Ω = $Ω (Rabi frequency)")
 println("Ω_eff = $Ω_eff (generalized Rabi frequency)")
 println("T_rabi = $T_rabi (Rabi period)")
-println("tf = $tf ($n_periods Rabi periods)")
+println("T_lab = $T_rabi (Lab period [approx])")
+println("tf = $tf ($n_periods Lab periods)")
 println()
 
 # =============================================================================
@@ -241,33 +245,33 @@ inch = 96  # points per inch
 # Experiment figure
 # =============================================================================
 
-fig = Figure(size=(6.5inch, 9inch), fontsize=12)
+fig = Figure(size=(8inch, 9inch), fontsize=12)
 
 # Main title
 Label(fig[0, 1:2],
-    L"\textbf{Filon Method on Rabi Oscillation: } \dot{u} = -i\left(\frac{\omega_0}{2}\sigma_z + \Omega\cos(\omega t)\,\sigma_x\right)u, \quad \omega_0 = %$(Int(ω₀)),\; \Omega = %$(Int(Ω))",
+    L"\textbf{Filon Method on Rabi Oscillation: } \dot{u} = -i\left(\frac{\omega_0}{2}\sigma_z + \Omega\cos(\omega t)\,\sigma_x\right)u, \quad \omega_0 = %$(ω₀),\; \Omega = %$(Ω),\; \omega = %$(ω)",
     fontsize=14, padding=(0, 0, 0, 0))
 
 nsteps_range = [2^k for k in 2:13]
 nsteps_fine = exp10.(range(log10(first(nsteps_range)), log10(last(nsteps_range)), length=200))
 
 # =============================================================================
-# Experiment 1: Numerical error in lab frame
+# Experiment 1: Numerical error in lab frame (ω≠0)
 # =============================================================================
 
 println("-" ^ 70)
-println("Experiment 1: Numerical error in lab frame")
+println("Experiment 1: Numerical error in lab frame (ω≠0)")
 println("-" ^ 70)
 
 error_label = use_l2_error ? L"L^2 \textrm{ Error}" : L"\textrm{Final time error}"
 
 ax1 = Axis(fig[1, 1],
-    title=L"\textrm{Lab frame}",
+    title=L"\textrm{Lab frame } (\omega \neq 0)",
     titlegap=10,
     xlabel="Number of Timesteps",
     ylabel=error_label,
     xscale=log10, yscale=log10,
-    limits=(nothing, (1e-15, 1e0)))
+    limits=(nothing, (1e-15, 1e1)))
 
 for (i, s) in enumerate(s_values)
     errors = Float64[]
@@ -299,6 +303,51 @@ lines!(ax1, nsteps_fine, 4e15 ./ (nsteps_fine .^ 8),
 println()
 
 # =============================================================================
+# Experiment 1b: Numerical error in lab frame (ω=0)
+# =============================================================================
+
+println("-" ^ 70)
+println("Experiment 1b: Numerical error in lab frame (ω=0)")
+println("-" ^ 70)
+
+ax1b = Axis(fig[1, 2],
+    title=L"\textrm{Lab frame } (\omega = 0)",
+    titlegap=10,
+    xlabel="Number of Timesteps",
+    ylabel=error_label,
+    xscale=log10, yscale=log10,
+    limits=(nothing, (1e-15, 1e1)))
+
+for (i, s) in enumerate(s_values)
+    errors = Float64[]
+    for nsteps in nsteps_range
+        sol = filon_solve(A_deriv_funcs_all, u0, frequencies_zero, tf, nsteps, s)
+        if use_l2_error
+            times = collect(range(0, tf, length=nsteps+1))
+            refs = subsample_reference(sol_ref, nsteps_ref, nsteps)
+            push!(errors, l2_error(times, sol, refs))
+        else
+            push!(errors, norm(sol[:, end] - sol_ref[:, end]))
+        end
+    end
+    scatterlines!(ax1b, nsteps_range, errors, color=colors[i],
+        marker=:circle)
+    @printf("  s=%d: max error = %.2e, min error = %.2e\n", s, maximum(errors), minimum(errors))
+end
+
+# Reference lines
+lines!(ax1b, nsteps_fine, 2e6 ./ (nsteps_fine .^ 2),
+    linestyle=:dot, color=:gray, linewidth=2)
+lines!(ax1b, nsteps_fine, 4e9 ./ (nsteps_fine .^ 4),
+    linestyle=:dot, color=:gray, linewidth=2)
+lines!(ax1b, nsteps_fine, 4e12 ./ (nsteps_fine .^ 6),
+    linestyle=:dot, color=:gray, linewidth=2)
+lines!(ax1b, nsteps_fine, 4e15 ./ (nsteps_fine .^ 8),
+    linestyle=:dot, color=:gray, linewidth=2)
+
+println()
+
+# =============================================================================
 # Experiment 2: Numerical error in rotating frame
 # =============================================================================
 
@@ -312,7 +361,7 @@ ax2 = Axis(fig[2, 1],
     xlabel="Number of Timesteps",
     ylabel=error_label,
     xscale=log10, yscale=log10,
-    limits=(nothing, (1e-15, 1e0)))
+    limits=(nothing, (1e-15, 1e1)))
 
 for (i, s) in enumerate(s_values)
     errors = Float64[]
@@ -351,13 +400,13 @@ println("-" ^ 70)
 println("Experiment 3: Rotating frame solutions vs lab frame truth")
 println("-" ^ 70)
 
-ax3 = Axis(fig[3, 1],
+ax3 = Axis(fig[2, 2],
     title=L"\textrm{Rotating frame vs lab frame truth}",
     titlegap=10,
     xlabel="Number of Timesteps",
     ylabel=error_label,
     xscale=log10, yscale=log10,
-    limits=(nothing, (1e-15, 1e0)))
+    limits=(nothing, (1e-15, 1e1)))
 
 # RWA error (constant floor)
 if use_l2_error
@@ -433,10 +482,17 @@ ref_entries = [
 ]
 ref_labels = [L"O(\Delta t^2)", L"O(\Delta t^4)", L"O(\Delta t^6)", L"O(\Delta t^8)", "RWA error"]
 
-Legend(fig[1:3, 2],
+Legend(fig[3, 1:2],
     [s_entries, ref_entries],
     [s_labels, ref_labels],
-    ["Order s", "Reference"])
+    ["Order s", "Reference"],
+    orientation=:horizontal,
+    tellheight=true)
+
+# Make subplots square (must be done after axes are created)
+for i in 1:2
+    rowsize!(fig.layout, i, Aspect(1, 1))
+end
 
 # =============================================================================
 # Save experiment figure
@@ -452,7 +508,6 @@ save(joinpath(@__DIR__, "..", "Plots", "rabi_experiments.svg"), fig)
 save(joinpath(@__DIR__, "..", "Plots", "rabi_experiments.pdf"), fig)
 println("Saved figure to Plots/rabi_experiments.{png,svg,pdf}")
 
-display(fig)
 
 # =============================================================================
 # Solution plots (lab frame and rotating frame)
@@ -496,15 +551,15 @@ end
 u1_rot_in_lab = u_rot_in_lab[1, :]
 u2_rot_in_lab = u_rot_in_lab[2, :]
 
-fig2 = Figure(size=(6.5inch, 7.5inch), fontsize=12)
+fig2 = Figure(size=(8.5inch, 9inch), fontsize=12)
 
 Label(fig2[0, 1:2],
-    L"\textbf{Rabi Oscillation Solutions: } \dot{u} = -i\left(\frac{\omega_0}{2}\sigma_z + \Omega\cos(\omega t)\,\sigma_x\right)u, \quad \omega_0 = %$(Int(ω₀)),\; \Omega = %$(Int(Ω)),\; \omega = %$(Int(ω))",
+    L"\textbf{Rabi Oscillation Solutions: } \dot{u} = -i\left(\frac{\omega_0}{2}\sigma_z + \Omega\cos(\omega t)\,\sigma_x\right)u, \quad \omega_0 = %$(ω₀),\; \Omega = %$(Ω),\; \omega = %$(ω)",
     fontsize=14, padding=(0, 0, 0, 0))
 
 # --- Lab frame: complex amplitudes ---
 ax_la = Axis(fig2[1, 1],
-    title=L"\textrm{Lab frame}",
+    title=L"\textrm{Lab frame: complex amplitudes}",
     titlegap=10,
     xlabel="Time",
     ylabel="Amplitude")
@@ -513,9 +568,18 @@ lines!(ax_la, t_plot, imag.(u1_lab), color=colors[2])
 lines!(ax_la, t_plot, real.(u2_lab), color=colors[3])
 lines!(ax_la, t_plot, imag.(u2_lab), color=colors[4])
 
+# --- Lab frame: populations ---
+ax_lp = Axis(fig2[1, 2],
+    title=L"\textrm{Lab frame: populations}",
+    titlegap=10,
+    xlabel="Time",
+    ylabel="Population")
+lines!(ax_lp, t_plot, pop_excited_lab, color=colors[1], label=L"|u_1|^2")
+lines!(ax_lp, t_plot, pop_ground_lab, color=colors[2], label=L"|u_2|^2")
+
 # --- Rotating frame: complex amplitudes ---
 ax_ra = Axis(fig2[2, 1],
-    title=L"\textrm{Rotating frame (RWA)}",
+    title=L"\textrm{Rotating frame (RWA): complex amplitudes}",
     titlegap=10,
     xlabel="Time",
     ylabel="Amplitude")
@@ -523,6 +587,15 @@ lines!(ax_ra, t_plot, real.(u1_rot), color=colors[1])
 lines!(ax_ra, t_plot, imag.(u1_rot), color=colors[2])
 lines!(ax_ra, t_plot, real.(u2_rot), color=colors[3])
 lines!(ax_ra, t_plot, imag.(u2_rot), color=colors[4])
+
+# --- Rotating frame: populations ---
+ax_rp = Axis(fig2[2, 2],
+    title=L"\textrm{Rotating frame (RWA): populations}",
+    titlegap=10,
+    xlabel="Time",
+    ylabel="Population")
+lines!(ax_rp, t_plot, pop_excited_rot, color=colors[1])
+lines!(ax_rp, t_plot, pop_ground_rot, color=colors[2])
 
 # --- Error: rotating frame (in lab coordinates) vs lab frame ---
 err_rot_lab = u_rot_in_lab .- sol_lab_plot
@@ -536,10 +609,25 @@ lines!(ax_err, t_plot, imag.(err_rot_lab[1, :]), color=colors[2])
 lines!(ax_err, t_plot, real.(err_rot_lab[2, :]), color=colors[3])
 lines!(ax_err, t_plot, imag.(err_rot_lab[2, :]), color=colors[4])
 
-# Shared amplitude legend
+# --- Lab frame: ω=0 vs ω≠0 comparison ---
+# Compute lab frame solution using Filon with nonzero frequencies
+sol_lab_nonzero = filon_solve(A_deriv_funcs_all, u0, frequencies_lab, tf, nsteps_plot, s_ref)
+err_freq = sol_lab_nonzero .- sol_lab_plot
+
+ax_freq = Axis(fig2[3, 2],
+    title=L"\textrm{Lab frame: Filon error } (\omega \neq 0) - (\omega = 0)",
+    titlegap=10,
+    xlabel="Time",
+    ylabel="Error")
+lines!(ax_freq, t_plot, real.(err_freq[1, :]), color=colors[1])
+lines!(ax_freq, t_plot, imag.(err_freq[1, :]), color=colors[2])
+lines!(ax_freq, t_plot, real.(err_freq[2, :]), color=colors[3])
+lines!(ax_freq, t_plot, imag.(err_freq[2, :]), color=colors[4])
+
+# Shared legend
 amp_entries = [LineElement(color=colors[i]) for i in 1:4]
 amp_labels = [L"\textrm{Re}(u_1)", L"\textrm{Im}(u_1)", L"\textrm{Re}(u_2)", L"\textrm{Im}(u_2)"]
-Legend(fig2[1:3, 2], amp_entries, amp_labels, "Component")
+Legend(fig2[4, 1:2], amp_entries, amp_labels, "Component", orientation=:horizontal, tellheight=true)
 
 save(joinpath(@__DIR__, "..", "Plots", "rabi_solutions.png"), fig2)
 save(joinpath(@__DIR__, "..", "Plots", "rabi_solutions.svg"), fig2)
@@ -547,3 +635,4 @@ save(joinpath(@__DIR__, "..", "Plots", "rabi_solutions.pdf"), fig2)
 println("Saved figure to Plots/rabi_solutions.{png,svg,pdf}")
 
 display(fig2)
+display(fig)
