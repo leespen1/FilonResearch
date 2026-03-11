@@ -9,4 +9,7 @@ end
 @testset "Explicit Filon integration" begin
     include("./test_explicit_filon_integration.jl")
 end
+@testset "Manufactured polynomial solution" begin
+    include("./test_manufactured_poly_solution.jl")
+end
 

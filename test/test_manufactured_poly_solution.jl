@@ -1,36 +1,9 @@
-#=
-Manufactured Polynomial Solution Tests
-=======================================
-
-Tests the Filon method on a system whose exact solution is p(t)·e^(iωt),
-where p(t) is a polynomial. Three checks:
-
-1. Exactness: single-timestep error is zero when degree ≤ 2s+1 (Filon) or 2(s+1) (Hermite)
-2. Convergence with exact Filon frequencies
-3. Convergence with zero frequencies (Hermite treating oscillatory solution as generic)
-=#
-
-using FilonResearch
-using LinearAlgebra
-using Printf
+using FilonResearch, Test, LinearAlgebra, Printf
 
 # ============================================================================
 # Manufactured Solution Functions
 # ============================================================================
 
-"""
-Return
-    y = e^{i\\omega t}
-    x = (1+t)e^{i\\omega t}
-    z = (1+t+t^2/2)e^{i\\omega t}
-    ? = (1+t+t^2/2 + t^3/6)e^{i\\omega t}
-    ⋮
-
-which is the solution to the linear system of ODEs
-    [ẏ]   [iw  0  0 ⋯ ] [y]
-    [ẋ] = [1  iw  0 ⋯ ] [x]
-    [ż]   [0  1  iw ⋯ ] [z]
-"""
 function poly_osc_solution(frequency, degree, t)
     @assert degree >= 0 "Degree must be non-negative"
     sol = zeros(ComplexF64, 1+degree)
@@ -41,18 +14,6 @@ function poly_osc_solution(frequency, degree, t)
     return sol
 end
 
-"""
-Construct the matrix used in the linear system of ODEs
-    [ẏ]   [iw  0  0 ⋯ ] [y]
-    [ẋ] = [1  iw  0 ⋯ ] [x]
-    [ż]   [0  1  iw ⋯ ] [z]
-
-Which has solution
-    y = e^{i\\omega t}
-    x = (1+t)e^{i\\omega t}
-    z = (1+t+t^2/2)e^{i\\omega t}
-    ? = (1+t+t^2/2 + t^3/6)e^{i\\omega t}
-"""
 function poly_osc_ode_mat(frequency, degree)
     A = zeros(ComplexF64, 1+degree, 1+degree)
     for i in 1:degree
@@ -63,17 +24,6 @@ function poly_osc_ode_mat(frequency, degree)
     return A
 end
 
-"""
-Construct a manufactured solution with multiple frequencies, assembled
-block-diagonally from single-frequency Jordan blocks.
-
-`blocks` is a vector of (frequency, degree) pairs. Each block produces
-(degree+1) components of the form
-
-    t^k/k! * exp(i*frequency*t)  (summed up to degree k)
-
-Returns the full solution vector at time `t`.
-"""
 function multi_poly_osc_solution(blocks, t)
     n = sum(d + 1 for (_, d) in blocks)
     sol = zeros(ComplexF64, n)
@@ -92,12 +42,6 @@ function multi_poly_osc_solution(blocks, t)
     return sol
 end
 
-"""
-Construct the block-diagonal ODE matrix for a multi-frequency manufactured
-solution. Each block is a Jordan block with eigenvalue i*frequency.
-
-`blocks` is a vector of (frequency, degree) pairs.
-"""
 function multi_poly_osc_ode_mat(blocks)
     n = sum(d + 1 for (_, d) in blocks)
     A = zeros(ComplexF64, n, n)
@@ -117,10 +61,6 @@ function multi_poly_osc_ode_mat(blocks)
     return A
 end
 
-"""
-Return the vector of Filon frequencies for a multi-frequency manufactured
-solution. Each component gets the frequency of its block.
-"""
 function multi_poly_osc_frequencies(blocks)
     n = sum(d + 1 for (_, d) in blocks)
     freqs = zeros(Float64, n)
@@ -135,17 +75,6 @@ function multi_poly_osc_frequencies(blocks)
 
     return freqs
 end
-
-# ============================================================================
-# Parameters
-# ============================================================================
-
-ω = 10.0
-T = 1.0
-
-# ============================================================================
-# Helper
-# ============================================================================
 
 function print_convergence_table(nsteps_vec, errors, orders; title="")
     println("\n", "="^60)
@@ -167,6 +96,44 @@ function print_convergence_table(nsteps_vec, errors, orders; title="")
     end
 end
 
+convergence_test_count = Ref(0)
+
+function check_convergence(errors, expected_order; floor=1e-11)
+    meaningful = [log2(errors[i] / errors[i+1])
+                  for i in 1:length(errors)-1
+                  if errors[i] > floor && errors[i+1] > floor]
+    if isempty(meaningful)
+        # All errors below floor — method is essentially exact, skip order check
+        @test maximum(errors) < floor
+    else
+        n = min(3, length(meaningful))
+        avg_order = sum(meaningful[end-n+1:end]) / n
+        @test avg_order > expected_order - 0.5
+    end
+    @test errors[end] < errors[1] || errors[end] < floor
+    convergence_test_count[] += 1
+end
+
+# ============================================================================
+# Parameters
+# ============================================================================
+
+ω = 10.0
+T = 1.0
+
+# ============================================================================
+# Banner
+# ============================================================================
+
+println()
+println("╔", "═"^58, "╗")
+println("║", lpad("Manufactured Polynomial Solution Tests", 49), lpad("", 9), "║")
+println("║", lpad("", 58), "║")
+println("║", lpad("Exactness + convergence for p(t)·exp(iωt) solutions", 55), lpad("", 3), "║")
+println("║", lpad("ω = $ω,  T = $T,  s = 0:3", 43), lpad("", 15), "║")
+println("╚", "═"^58, "╝")
+println()
+
 # ============================================================================
 # Part 1: Exactness Check (Single Timestep)
 # ============================================================================
@@ -181,7 +148,7 @@ println("  ω=0 (Hermite): exact for polynomial degree ≤ 2(s+1)")
 println()
 
 for s in 0:3
-    max_degree = 2*(s+1) + 1  # test up to one past Hermite exactness boundary
+    max_degree = 2*(s+1) + 1
     println(@sprintf("s = %d:  Filon exact ≤ %d,  Hermite exact ≤ %d", s, 2s+1, 2*(s+1)))
     println(@sprintf("  %6s  %15s  %15s", "degree", "err(ω=$ω)", "err(ω=0)"))
     println("  ", "-"^40)
@@ -203,6 +170,15 @@ for s in 0:3
         err_hermite = maximum(abs, sol_hermite - true_sol0)
 
         println(@sprintf("  %6d  %15.3e  %15.3e", degree, err_filon, err_hermite))
+
+        # Filon exactness: degree ≤ 2s+1
+        if degree <= 2s+1
+            @test err_filon < 1e-13
+        end
+        # Hermite exactness: degree ≤ 2(s+1)
+        if degree <= 2*(s+1)
+            @test err_hermite < 1e-13
+        end
     end
     println()
 end
@@ -235,6 +211,8 @@ for s in 0:3
     orders = [log2(errors[i] / errors[i+1]) for i in 1:length(errors)-1 if errors[i] > 0 && errors[i+1] > 0]
     print_convergence_table(nsteps_vec, errors, orders,
         title="s = $s (expected order: $(2*(s+1)))")
+
+    check_convergence(errors, 2*(s+1))
 end
 
 # ============================================================================
@@ -260,6 +238,8 @@ for s in 0:3
     orders = [log2(errors[i] / errors[i+1]) for i in 1:length(errors)-1 if errors[i] > 0 && errors[i+1] > 0]
     print_convergence_table(nsteps_vec, errors, orders,
         title="s = $s (expected order: $(2*(s+1)))")
+
+    check_convergence(errors, 2*(s+1))
 end
 
 # ============================================================================
@@ -301,6 +281,11 @@ for s in 0:3
         max_deg = maximum(d for (_, d) in blocks)
         label = join(["(ω=$(Int(f/ω))ω, d=$d)" for (f, d) in blocks], ", ")
         println(@sprintf("  %-40s  %15.3e", label, err))
+
+        # Exact when all block degrees ≤ 2s+1
+        if max_deg <= 2s+1
+            @test err < 1e-12
+        end
     end
     println()
 end
@@ -332,6 +317,8 @@ for s in 0:3
     orders = [log2(errors[i] / errors[i+1]) for i in 1:length(errors)-1 if errors[i] > 0 && errors[i+1] > 0]
     print_convergence_table(nsteps_vec, errors, orders,
         title="s = $s (expected order: $(2*(s+1)))")
+
+    check_convergence(errors, 2*(s+1))
 end
 
 # ============================================================================
@@ -356,6 +343,12 @@ for s in 0:3
     orders = [log2(errors[i] / errors[i+1]) for i in 1:length(errors)-1 if errors[i] > 0 && errors[i+1] > 0]
     print_convergence_table(nsteps_vec, errors, orders,
         title="s = $s (expected order: $(2*(s+1)))")
+
+    check_convergence(errors, 2*(s+1))
 end
 
+println()
+println("="^60)
+println("Convergence checks run: $(convergence_test_count[])")
+println("="^60)
 println("\nDone.")
