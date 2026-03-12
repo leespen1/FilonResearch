@@ -2,7 +2,7 @@ module FilonResearch
 
 import Polynomials
 import Polynomials: Polynomial, derivative
-import LinearAlgebra: dot
+import LinearAlgebra: dot, mul!
 import LinearMaps: LinearMap
 import IterativeSolvers: gmres
 
@@ -21,7 +21,7 @@ include("hard_coded_2by2.jl")
 export filon_timestep_order2_size2, filon_order2_size2
 export filon_timestep_order4_size2, filon_order4_size2
 include("filon_timestep.jl")
-export filon_timestep, Algorithm1, filon_solve, FilonProblem
+export filon_timestep, Algorithm1, filon_solve, FilonProblem, get_LHS_mat, filon_timestep_integral_error
 include("controlled_operators.jl")
 export ControlledFunctionOp, ControlledOp
 

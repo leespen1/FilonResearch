@@ -81,8 +81,100 @@ function filon_timestep(
         u -> u - Algorithm1(A_derivs_tnp1, u, frequencies, t_np1, s, weights_implicit),
         N, N
     )
-    u_np1 = gmres(LHS, rhs, abstol=1e-15, reltol=1e-15)
+    u_np1 = gmres(LHS, rhs, abstol=1e-13, reltol=1e-13)
     return u_np1
+end
+
+"""
+Timestep the linear system of ODEs u̇ = Au using the Filon method, assuming that
+A is time-independent.
+"""
+function get_LHS_mat(
+    A_derivs_tn::Union{AbstractVector, Tuple},
+    A_derivs_tnp1::Union{AbstractVector, Tuple},
+    u_n::AbstractVector{<: Number},
+    frequencies::AbstractVector{<: Number},
+    t_n::Real,
+    t_np1::Real,
+    s::Integer=0,
+    ;
+    rescale::Bool=true
+)
+    dt = t_np1 - t_n
+
+    if rescale
+        modified_frequencies = frequencies .* (0.5*dt)
+        weights_explicit, weights_implicit = filon_weights(modified_frequencies, s, -1, 1)
+        for i in eachindex(weights_explicit, weights_implicit)
+            j = i-1
+            weights_explicit[i] .*= cis.(frequencies .* (t_n+0.5*dt)) .* (0.5*dt)^(j+1)
+            weights_implicit[i] .*= cis.(frequencies .* (t_n+0.5*dt)) .* (0.5*dt)^(j+1)
+        end
+    else
+        weights_explicit, weights_implicit = filon_weights(frequencies, s, t_n, t_np1)
+    end
+
+    N = length(u_n)
+    rhs = u_n + Algorithm1(A_derivs_tn, u_n, frequencies, t_n, s, weights_explicit)
+    LHS = LinearMap(
+        u -> u - Algorithm1(A_derivs_tnp1, u, frequencies, t_np1, s, weights_implicit),
+        N, N
+    )
+
+    identity_mat = zeros(ComplexF64, N, N)
+    for i in 1:N
+        identity_mat[i,i] = 1
+    end
+    LHS_mat = zeros(ComplexF64, N, N)
+
+    for i in 1:N
+        mul!(view(LHS_mat, :, i), LHS, identity_mat[:,i])
+    end
+
+    return LHS_mat
+end
+
+"""
+Compute the error in a single Filon timestep due only to the discretization
+itself by having the user provide an analytic solution at both points.
+"""
+function filon_timestep_integral_error(
+    A_derivs_tn::Union{AbstractVector, Tuple},
+    A_derivs_tnp1::Union{AbstractVector, Tuple},
+    u_n::AbstractVector{<: Number},
+    u_np1::AbstractVector{<: Number},
+    frequencies::AbstractVector{<: Number},
+    t_n::Real,
+    t_np1::Real,
+    s::Integer=0,
+    ;
+    rescale::Bool=true
+)
+    dt = t_np1 - t_n
+
+    if rescale
+        modified_frequencies = frequencies .* (0.5*dt)
+        weights_explicit, weights_implicit = filon_weights(modified_frequencies, s, -1, 1)
+        for i in eachindex(weights_explicit, weights_implicit)
+            j = i-1
+            weights_explicit[i] .*= cis.(frequencies .* (t_n+0.5*dt)) .* (0.5*dt)^(j+1)
+            weights_implicit[i] .*= cis.(frequencies .* (t_n+0.5*dt)) .* (0.5*dt)^(j+1)
+        end
+    else
+        weights_explicit, weights_implicit = filon_weights(frequencies, s, t_n, t_np1)
+    end
+
+    N = length(u_n)
+    rhs = u_n + Algorithm1(A_derivs_tn, u_n, frequencies, t_n, s, weights_explicit)
+    LHS_map = LinearMap(
+        u -> u - Algorithm1(A_derivs_tnp1, u, frequencies, t_np1, s, weights_implicit),
+        N, N
+    )
+    lhs_vec = zeros(ComplexF64, N)
+    mul!(lhs_vec, LHS_map, u_np1)
+
+    error = lhs_vec - rhs
+    return error
 end
 
 
