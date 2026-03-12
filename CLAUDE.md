@@ -8,6 +8,14 @@ FilonResearch is a Julia package implementing Filon quadrature methods for quant
 
 **Domain**: Numerical integration of oscillatory integrals of the form ∫f(x)e^(iωx)dx, applied to ODE solving.
 
+## Math Theory
+The latex/pdf document in `FilonProjectOverleaf/` contains my mathematical
+description of the Filon method, and other writings (e.g. summaries of numerical
+examples I performed). This should be consulted when writing reviewing
+mathematical aspects of the implementation of the method, or designing new
+features.
+
+
 ## Build and Test Commands
 
 ```bash
@@ -71,3 +79,4 @@ scalar_filon ← derivatives, filon_weights, explicit_filon_integral
 - Rescaling option available in `filon_timestep()` for numerical stability on large intervals
 - Hermite polynomial hard-coding limited to s ≤ 3
 - WIP modules: `manufactured_solution.jl`, `hermite_vars.jl`, `controlled_operators.jl`
+
