@@ -10,6 +10,10 @@ end
     include("./test_explicit_filon_integration.jl")
 end
 @testset "Manufactured polynomial solution" begin
-    include("./test_manufactured_poly_solution.jl")
+    include("./test_manufactured_polynomial_solution.jl")
+end
+
+@testset "Manufactured polynomial solution, multifrequency" begin
+    include("./test_manufactured_polynomial_solution_multifrequency.jl")
 end
 
