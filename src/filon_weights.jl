@@ -13,6 +13,22 @@ function filon_moments(degree::Integer, w::Real, a::Real=-1, b::Real=1)
         for n in 0:degree
             moments[1+n] = (b^(n+1) - a^(n+1)) / (n+1)
         end
+    elseif abs(w) < 1.0
+        # Taylor series for small w to avoid catastrophic cancellation in the
+        # oscillatory recurrence. Uses:
+        #   μ_n(w) = ∫_a^b x^n e^{iwx} dx = Σ_{k=0}^{K} (iw)^k/k! × (b^{n+k+1} - a^{n+k+1})/(n+k+1)
+        # For |w| < 2 and K = 30, the truncation error is |w|^{K+1}/(K+1)! < 8e-24.
+        K = 30
+        for n in 0:degree
+            val = complex(0.0)
+            iw_power = 1.0 + 0.0im  # (iw)^k / k!, starting at k=0
+            for k in 0:K
+                monomial_moment = (b^(n+k+1) - a^(n+k+1)) / (n+k+1)
+                val += iw_power * monomial_moment
+                iw_power *= im*w / (k+1)
+            end
+            moments[1+n] = val
+        end
     else
         exp_a = cis(w*a)
         exp_b = cis(w*b)

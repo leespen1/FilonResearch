@@ -80,3 +80,13 @@ scalar_filon ← derivatives, filon_weights, explicit_filon_integral
 - Hermite polynomial hard-coding limited to s ≤ 3
 - WIP modules: `manufactured_solution.jl`, `hermite_vars.jl`, `controlled_operators.jl`
 
+## Known Issues and Recent Changes
+
+### Small-ω Taylor branch in `filon_moments` (2026-03-16, WIP)
+
+**Problem**: `filon_moments` in `src/filon_weights.jl` suffers from catastrophic cancellation when ω is small but nonzero. The oscillatory recurrence computes differences like `sin(w) - w·cos(w) ≈ w³/3`, losing digits when divided by powers of w. This causes Filon(ω≠0) to diverge for s≥1 when effective_ω = freq × 0.5 × dt becomes small (e.g. CNOT3 example with small Kerr frequencies, or any problem at high nsteps).
+
+**Change**: Added an `elseif abs(w) < 2.0` branch in `filon_moments` that uses a Taylor series: `μ_n(w) = Σ_{k=0}^{30} (iw)^k/k! × (b^{n+k+1} - a^{n+k+1})/(n+k+1)`. This avoids cancellation entirely.
+
+**Status**: The Taylor branch is implemented but the `hardcoded_filon_weights` function still uses the old closed-form formulas and may have the same small-ω issue. The `test_manufactured_polynomial_solution.jl` multi-frequency convergence test (Part 5) was failing for s≥1 before this change was made — it is not yet confirmed whether the Taylor branch resolves those failures or if they are a separate issue.
+
