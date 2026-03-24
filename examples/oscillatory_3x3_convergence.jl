@@ -83,10 +83,12 @@ end
 
 # Diagonal frequencies (large, distinct)
 ω₁, ω₂, ω₃ = 10.0, 25.0, 40.0
+#ω₁, ω₂, ω₃ = 0.0, 0.0, 0.0
 D = Diagonal([ω₁, ω₂, ω₃])
 
 # Small smooth perturbation and its derivatives
-ε = 0.1
+#ε = 0.1
+ε = 0.0
 
 A₀(t) = ComplexF64.(ε * [sin(t)    cos(t)    sin(2t);
                          cos(t)    sin(3t)   cos(t);
@@ -115,7 +117,7 @@ A_deriv_funcs = (
 
 # Initial condition and final time
 u₀ = ComplexF64[1.0, 1.0, 1.0]
-T = 5.0
+T = 200.0
 
 # Frequencies for the Filon ansatz
 frequencies_filon = [ω₁, ω₂, ω₃]
