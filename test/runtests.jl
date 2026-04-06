@@ -17,3 +17,7 @@ end
     include("./test_manufactured_polynomial_solution_multifrequency.jl")
 end
 
+@testset "Hard-coded LHS/RHS" begin
+    include("./test_hardcoded_lhs_rhs.jl")
+end
+
