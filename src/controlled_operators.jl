@@ -6,13 +6,14 @@ Note: may be type-unstable when using tuple of operators (because tuples can
 be heterogeneous). But perhaps it is okay, as long as the compiler can figure
 out reasonable output types.
 """
-struct ControlledOp{T <: Union{Tuple, AbstractVector}}
-    operators::T
-    coefficients::Vector{ComplexF64}
-    function ControlledOp(operators::T, coefficients::AbstractVector{<: Number}) where {T <: Union{Tuple, AbstractVector}}
+struct ControlledOp{opsT <: Union{Tuple, AbstractVector}, coeffsT <: Union{Tuple, AbstractVector{<: Number}}}
+    operators::opsT
+    coefficients::coeffsT
+    function ControlledOp(operators::opsT, coefficients::coeffsT) where {opsT <: Union{Tuple, AbstractVector}, coeffsT <: Union{Tuple, AbstractVector{<: Number}}}
         @assert length(operators) == length(coefficients) "Must provide one coefficient for each operator."
-        @assert all(x -> hasmethod(*, (typeof(x), Vector{ComplexF64})), operators) "Each operator in operators must be able to multiple a Vector{ComplexF64}"
-        new{T}(operators, convert(Vector{ComplexF64}, coefficients))
+        @assert all(x -> hasmethod(*, (typeof(x), eltype(coefficients))), operators) "Each operator in operators must be able to multiple a Vector{ComplexF64}"
+        R = real(eltype(coefficients))
+        new{opsT,coeffsT}(operators, coefficients)
     end
 end
 
@@ -49,13 +50,14 @@ struct ControlledFunctionOp{T1 <: Union{Tuple, AbstractVector}, T2 <: Tuple} <: 
     function ControlledFunctionOp(operators::T1, coefficient_functions::T2) where {T1 <: Union{Tuple, AbstractVector}, T2 <: Tuple}
         @assert length(operators) == length(coefficient_functions) "Must provide one function for each operator."
         @assert all(x -> isa(x, Function), coefficient_functions) "Each element of A_deriv_funcs must be a function."
-        @assert all(x -> hasmethod(x, (Float64,)), coefficient_functions) "Each function `f` in A_deriv_funcs must have a method `f(t::Float64)` defined."
+        @assert all(x -> hasmethod(x, (Real,)), coefficient_functions) "Each function `f` in A_deriv_funcs must have a method `f(t::Float64)` defined."
+
         new{T1, T2}(operators, coefficient_functions)
     end
 end
 
 function (self::ControlledFunctionOp)(t::Real)
-    coefficients = [f(t) for f in self.coefficient_functions]
+    coefficients = ntuple(i -> self.coefficient_functions[i](t), length(self.coefficient_functions))
     return ControlledOp(self.operators, coefficients)
 end
 

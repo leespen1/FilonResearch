@@ -41,7 +41,8 @@ end
 Compute the vector where the i-th entry is the (i-1)-th derivative of exp(iωt)
 """
 function exp_iωt_derivs(ω::Real, t::Real, n_derivs::Integer; pi_units=false)
-    deriv_vec = zeros(ComplexF64, 1+n_derivs)     
+    T = promote_type(typeof(float(ω)), typeof(float(t)))
+    deriv_vec = zeros(Complex{T}, 1+n_derivs)     
     deriv_vec[1] = pi_units ? cispi(ω*t) : cis(ω*t)
     for i in 1:n_derivs
         deriv_vec[i+1] = im*ω*deriv_vec[i]
@@ -54,8 +55,9 @@ Compute the derivatives of [e^{i\\omega_1 t}, …, e^{i\\omega_n t}], collect
 them in a vector of vectors.
 """
 function exp_iωt_derivs(ωs::AbstractVector{<: Real}, t::Real, n_derivs::Integer; pi_units=false)
+    T = promote_type(float(eltype(ωs)), typeof(float(t)))
     nfreq = length(ωs)
-    deriv_vec = [zeros(ComplexF64, nfreq) for _ in 0:n_derivs]
+    deriv_vec = [zeros(Complex{T}, nfreq) for _ in 0:n_derivs]
     for j in 1:nfreq 
         scalar_deriv_vec = exp_iωt_derivs(ωs[j], t, n_derivs; pi_units=pi_units)
         for i in eachindex(deriv_vec, scalar_deriv_vec)
@@ -70,13 +72,17 @@ Given A, Ȧ, Ä, …, compute u̇, ü, … for the differential equation
 
     \\frac{du}{dt} = A u,
 
-using the general leibniz rule (product rule)
+using the general leibniz rule (product rule).
+
+Result is forced to be complex.
 """
 function linear_ode_derivs(A_derivs, u::AbstractVector{<: Number}, maxorder=length(A_derivs))
 # TODO make a hard-coded version of this for first few orders, e.g. do u̇ = (Ȧ + A²)u
     @assert length(A_derivs) >= maxorder-1 "Must provide ≥ (maxorder-1) derivatives of A to compute s derivatives of dudt = A*u."
-    u_derivs = Vector{ComplexF64}[]
-    push!(u_derivs, convert(Vector{ComplexF64}, u))
+
+    T = float(real(eltype(u)))
+    u_derivs = Vector{Complex{T}}[]
+    push!(u_derivs, convert(Vector{Complex{T}}, u))
     for m in 0:maxorder-1
         dm_u = general_leibniz_rule(A_derivs, u_derivs, m)
         push!(u_derivs, dm_u)

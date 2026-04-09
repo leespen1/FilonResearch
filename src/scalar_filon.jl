@@ -58,7 +58,7 @@ function filon_timestep(λ::Union{Number, AbstractVector{<: Number}}, ω::Real, 
 end
 
 """
-Given the dahlquist equation
+Given the scalar dahlquist equation
 
     \\dot{u} = \\lambda u,
 
@@ -67,7 +67,8 @@ compute the the vector [u̇, ü, …]ᵀ.
 n_derivs is the number of derivatives to take of u̇.
 """
 function dahlquist_derivatives(λ::Number, u::Number, n_derivs::Integer)
-    derivs = zeros(ComplexF64, 1+n_derivs)
+    T = promote_type(typeof(λ), typeof(u))
+    derivs = zeros(T, 1+n_derivs)
     for i in 1:1+n_derivs
         derivs[i] = λ^i * u
     end
@@ -86,7 +87,8 @@ the value of λ and its derivatives).
 """
 function dahlquist_derivatives(λ::AbstractVector, u::Number, n_derivs::Integer)
     @assert length(λ) > n_derivs "Must provide at least n+1 derivatives of λ to take n derivatives of u̇"
-    u_derivs = zeros(ComplexF64, 2+n_derivs)
+    T = promote_type(eltype(λ), typeof(u))
+    u_derivs = zeros(T, 2+n_derivs)
     u_derivs[1] = u
     for i in 1:1+n_derivs
         # Wasteful, redoes work for each succesive derivative, and allocates lots of vectors
@@ -95,62 +97,3 @@ function dahlquist_derivatives(λ::AbstractVector, u::Number, n_derivs::Integer)
     end
     return u_derivs[2:end]
 end
-
-#=
-function filon_dahlquist(λ, ω, s, nsteps, tf, u₀)
-    Δt = tf / nsteps
-    uₙ::ComplexF64 = u₀
-    uₙ₊₁::ComplexF64 = NaN
-    for step_i in 1:nsteps
-        tₙ = (step_i - 1)*Δt
-        tₙ₊₁ = (step_i)*Δt
-        uₙ₊₁ = filon_dahlquist_timestep(λ, ω, s, tₙ, tₙ₊₁, uₙ)
-        uₙ = uₙ₊₁
-    end
-    return uₙ₊₁
-end
-=#
-
-# TODO this is CHatGPT's suggestion for saveat logic. But don't do the
-# linear interpolation thing. Instead do Hermite interpolation or just shorten timestep size.
-function integrate(step, u0::Number, tspan, dt::Real; saveat=dt)
-    t_saves = Float64[]
-    u_saves = ComplexF64[]
-
-    t0, tf = tspan
-    t = t0
-    u = u0
-
-    # Prepare save structure
-    if saveat === nothing
-        ts = Float64[]
-        us = typeof(u)[]
-        push!(ts, t)
-        push!(us, u)
-        next_save_idx = nothing
-    else
-        ts = collect(saveat)
-        us = Vector{typeof(u)}(undef, length(ts))
-        next_save_idx = 1
-    end
-
-    while t < tf - eps(tf)
-        u_new = step!(u, t, dt)
-        t_new = t + dt
-
-        # Check save crossings
-        if next_save_idx !== nothing
-            while next_save_idx ≤ length(ts) && ts[next_save_idx] ≤ t_new
-                θ = (ts[next_save_idx] - t) / dt
-                us[next_save_idx] = (1 - θ) * u + θ * u_new
-                next_save_idx += 1
-            end
-        end
-
-        u = u_new
-        t = t_new
-    end
-
-    return saveat === nothing ? (nothing, nothing) : (ts, us)
-end
-

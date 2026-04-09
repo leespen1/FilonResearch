@@ -2,33 +2,34 @@
 Hard-coded Hermite cardinal polynomials, i.e. the basis functions ℓ_10, ... ,
 ℓ_1s such that ℓ^(k)_1j(1) = δ_kj and ℓ^(k)(-1) = 0 for k=0:s.
 """
-function hardcoded_hermite_cardinal_polynomials(s::Integer)
-    one_plus_x = Polynomial((1,1)) # 1 + x
-    one_minus_x = Polynomial((1,-1)) # 1 - x
+function hardcoded_hermite_cardinal_polynomials(s::Integer, ::Type{T}=Float64) where {T <: Real}
+    one_plus_x = Polynomial((1, 1)) # 1 + x
+    one_minus_x = Polynomial((1, -1)) # 1 - x
 
     if (s < 0) || (s > 3)
         throw(ArgumentError("s must be between 0 and 3; got $s"))
     end
 
-    polynomials = Vector{Polynomial{Float64, :x}}(undef, s+1)
+    polynomials = Vector{Polynomial{T, :x}}(undef, s+1)
+    # '//'  is rational division. (1 // 3)*BigFloat(1) will be 1.333..., to BigFloat precision, not cut off at double precision
     if (s == 0)
-        polynomials[1] = (1/2)*one_plus_x # ℓ_10
+        polynomials[1] = (1//2) * one_plus_x # ℓ_10
     elseif (s == 1)
-        polynomials[1] = (1/4) * one_plus_x^2 * Polynomial((2,-1)) # ℓ_10
-        polynomials[2] = -(1/4) * one_plus_x^2 * one_minus_x # ℓ_11
+        polynomials[1] = (1//4) * one_plus_x^2 * Polynomial((2,-1)) # ℓ_10
+        polynomials[2] = -(1//4) * one_plus_x^2 * one_minus_x # ℓ_11
     elseif (s == 2)
-        polynomials[1] = (1/16) * one_plus_x^3 * Polynomial((8,-9,3)) # ℓ_10
-        polynomials[2] = -(1/16) * one_plus_x^3 * one_minus_x * Polynomial((5,-3)) # ℓ_11
-        polynomials[3] = (1/16) * one_plus_x^3 * one_minus_x^2 # ℓ_12
+        polynomials[1] = (1//16) * one_plus_x^3 * Polynomial((8,-9,3)) # ℓ_10
+        polynomials[2] = -(1//16) * one_plus_x^3 * one_minus_x * Polynomial((5,-3)) # ℓ_11
+        polynomials[3] = (1//16) * one_plus_x^3 * one_minus_x^2 # ℓ_12
     elseif (s == 3)
         # (according to textbook) polynomials[1] = (1/32) * one_plus_x^4 * Polynomial((19,-37,27,-7)) # ℓ_10
-        polynomials[1] = (1/32) * one_plus_x^4 * Polynomial((16,-29,20,-5)) # ℓ_10
-        polynomials[2] = -(1/32) * one_plus_x^4 * one_minus_x * Polynomial((11,-14,5)) # ℓ_11
+        polynomials[1] = (1//32) * one_plus_x^4 * Polynomial((16,-29,20,-5)) # ℓ_10
+        polynomials[2] = -(1//32) * one_plus_x^4 * one_minus_x * Polynomial((11,-14,5)) # ℓ_11
         # (according to textbook) polynomials[3] = (1/32) * one_plus_x^4 * one_minus_x^2 * Polynomial((-2,3)) # ℓ_12
-        polynomials[3] = (1/32) * one_plus_x^4 * one_minus_x^2 * Polynomial((3,-2)) # ℓ_12
-        polynomials[4] = -(1/96) * one_plus_x^4 * one_minus_x^3 # ℓ_13
+        polynomials[3] = (1//32) * one_plus_x^4 * one_minus_x^2 * Polynomial((3,-2)) # ℓ_12
+        polynomials[4] = -(1//96) * one_plus_x^4 * one_minus_x^3 # ℓ_13
     else
-        throw
+        throw("Must have 0 ≤ s ≤ 3.")
     end
 
     return polynomials

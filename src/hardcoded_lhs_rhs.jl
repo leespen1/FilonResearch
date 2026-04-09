@@ -38,8 +38,9 @@ function _weight_phase_vectors(frequencies::AbstractVector{<: Real}, s::Integer,
     phase_E = cis.(scaled_freqs)   # exp(+i ω̂_k)
     phase_I = cis.(-scaled_freqs)  # exp(-i ω̂_k)
 
-    WE = Vector{Vector{ComplexF64}}(undef, 1+s)
-    WI = Vector{Vector{ComplexF64}}(undef, 1+s)
+    T = promote_type(float(eltype(frequencies)), typeof(float(t_n)), typeof(float(t_np1)))
+    WE = Vector{Vector{Complex{T}}}(undef, 1+s)
+    WI = Vector{Vector{Complex{T}}}(undef, 1+s)
 
     for j in 0:s
         scale = half_dt^(j+1)
@@ -66,7 +67,7 @@ function _mul_right_diag!(result::AbstractMatrix, A::AbstractMatrix, w::Abstract
 end
 
 function _mul_right_diag(A::AbstractMatrix, w::AbstractVector)
-    result = similar(A, ComplexF64)
+    result = similar(A, promote_type(eltype(A), eltype(w)))
     _mul_right_diag!(result, A, w)
     return result
 end
@@ -97,15 +98,16 @@ function filon_timestep_s0_backslash(
     frequencies::AbstractVector{<: Real},
     t_n::Real,
     t_np1::Real,
-)::Vector{ComplexF64}
+)
     N = length(u_n)
     WE, WI = _weight_phase_vectors(frequencies, 0, t_n, t_np1)
 
+    T = eltype(WE[1])
     # S_- = I + A_n * diag(WE[1])
-    S_minus = Matrix{ComplexF64}(I, N, N) + _mul_right_diag(A_n, WE[1])
+    S_minus = Matrix{T}(I, N, N) + _mul_right_diag(A_n, WE[1])
 
     # S_+ = I - A_{n+1} * diag(WI[1])
-    S_plus = Matrix{ComplexF64}(I, N, N) - _mul_right_diag(A_np1, WI[1])
+    S_plus = Matrix{T}(I, N, N) - _mul_right_diag(A_np1, WI[1])
 
     return S_plus \ (S_minus * u_n)
 end
@@ -122,7 +124,7 @@ function filon_timestep_s0_gmres(
     frequencies::AbstractVector{<: Real},
     t_n::Real,
     t_np1::Real,
-)::Vector{ComplexF64}
+)
     N = length(u_n)
     WE, WI = _weight_phase_vectors(frequencies, 0, t_n, t_np1)
 
@@ -135,7 +137,10 @@ function filon_timestep_s0_gmres(
         N, N
     )
 
-    return gmres(LHS, rhs, abstol=1e-13, reltol=1e-13)
+    double_precision_digits = 13 # use 1e-13 precision for Float64, scale for higher or lower precision
+    tol = eps(real(eltype(rhs)))^(double_precision_digits/16)
+    u_np1, ~ = Krylov.gmres(LHS, rhs, atol=tol, rtol=tol)
+    return u_np1
 end
 
 
@@ -193,7 +198,8 @@ function _form_M_s1(
     for k in 1:N
         AminusiOmega[k,k] -= im * Omega[k]
     end
-    tmp = zeros(ComplexF64, N, N)
+    T = promote_type(eltype(A), eltype(dA), eltype(W0), eltype(W1), eltype(Omega))
+    tmp = zeros(T, N, N)
     for k in 1:N
         for p in 1:N
             tmp[p,k] = W1[p] * AminusiOmega[p,k]
@@ -221,15 +227,17 @@ function filon_timestep_s1_backslash(
     frequencies::AbstractVector{<: Real},
     t_n::Real,
     t_np1::Real,
-)::Vector{ComplexF64}
+)
     N = length(u_n)
     WE, WI = _weight_phase_vectors(frequencies, 1, t_n, t_np1)
 
     M_E = _form_M_s1(A_n, dA_n, WE[1], WE[2], frequencies)
     M_I = _form_M_s1(A_np1, dA_np1, WI[1], WI[2], frequencies)
 
-    S_minus = Matrix{ComplexF64}(I, N, N) + M_E
-    S_plus  = Matrix{ComplexF64}(I, N, N) - M_I
+
+    T = eltype(WE[1])
+    S_minus = Matrix{T}(I, N, N) + M_E
+    S_plus  = Matrix{T}(I, N, N) - M_I
 
     return S_plus \ (S_minus * u_n)
 end
@@ -248,7 +256,7 @@ function filon_timestep_s1_gmres(
     frequencies::AbstractVector{<: Real},
     t_n::Real,
     t_np1::Real,
-)::Vector{ComplexF64}
+)
     N = length(u_n)
     WE, WI = _weight_phase_vectors(frequencies, 1, t_n, t_np1)
 
@@ -261,7 +269,10 @@ function filon_timestep_s1_gmres(
         N, N
     )
 
-    return gmres(LHS, rhs, abstol=1e-13, reltol=1e-13)
+    double_precision_digits = 13 # use 1e-13 precision for Float64, scale for higher or lower precision
+    tol = eps(real(eltype(rhs)))^(double_precision_digits/16)
+    u_np1, ~ = Krylov.gmres(LHS, rhs, atol=tol, rtol=tol)
+    return u_np1
 end
 
 
@@ -340,7 +351,7 @@ function _form_M_s2(
         AminusiOmega[k,k] -= im * Omega[k]
     end
     # diag(W_2) * (A - iΩ): scale rows
-    tmp = zeros(ComplexF64, N, N)
+    tmp = zeros(promote_type(eltype(W2), eltype(A)), N, N)
     for k in 1:N
         for p in 1:N
             tmp[p,k] = W2[p] * AminusiOmega[p,k]
@@ -351,7 +362,7 @@ function _form_M_s2(
     # j=2, ℓ=2: A * diag(W_2) * D_2
     D2 = _form_D2(A, dA, Omega)
     # diag(W_2) * D_2: scale rows
-    tmp2 = zeros(ComplexF64, N, N)
+    tmp2 = zeros(promote_type(eltype(W2), eltype(D2)), N, N)
     for k in 1:N
         for p in 1:N
             tmp2[p,k] = W2[p] * D2[p,k]
@@ -381,15 +392,16 @@ function filon_timestep_s2_backslash(
     frequencies::AbstractVector{<: Real},
     t_n::Real,
     t_np1::Real,
-)::Vector{ComplexF64}
+)
     N = length(u_n)
     WE, WI = _weight_phase_vectors(frequencies, 2, t_n, t_np1)
 
     M_E = _form_M_s2(A_n, dA_n, ddA_n, WE[1], WE[2], WE[3], frequencies)
     M_I = _form_M_s2(A_np1, dA_np1, ddA_np1, WI[1], WI[2], WI[3], frequencies)
 
-    S_minus = Matrix{ComplexF64}(I, N, N) + M_E
-    S_plus  = Matrix{ComplexF64}(I, N, N) - M_I
+    T = eltype(WE[1])
+    S_minus = Matrix{T}(I, N, N) + M_E
+    S_plus  = Matrix{T}(I, N, N) - M_I
 
     return S_plus \ (S_minus * u_n)
 end
@@ -410,7 +422,7 @@ function filon_timestep_s2_gmres(
     frequencies::AbstractVector{<: Real},
     t_n::Real,
     t_np1::Real,
-)::Vector{ComplexF64}
+)
     N = length(u_n)
     WE, WI = _weight_phase_vectors(frequencies, 2, t_n, t_np1)
 
@@ -423,7 +435,10 @@ function filon_timestep_s2_gmres(
         N, N
     )
 
-    return gmres(LHS, rhs, abstol=1e-13, reltol=1e-13)
+    double_precision_digits = 13 # use 1e-13 precision for Float64, scale for higher or lower precision
+    tol = eps(real(eltype(rhs)))^(double_precision_digits/16)
+    u_np1, ~ = Krylov.gmres(LHS, rhs, atol=tol, rtol=tol)
+    return u_np1
 end
 
 
@@ -479,8 +494,9 @@ function filon_S_plus_S_minus(
         M_I = _form_M_s2(A_np1, dA_np1, ddA_np1, WI[1], WI[2], WI[3], frequencies)
     end
 
-    S_minus = Matrix{ComplexF64}(I, N, N) + M_E
-    S_plus  = Matrix{ComplexF64}(I, N, N) - M_I
+    T = eltype(WE[1])
+    S_minus = Matrix{T}(I, N, N) + M_E
+    S_plus  = Matrix{T}(I, N, N) - M_I
 
     return S_plus, S_minus
 end
@@ -517,7 +533,7 @@ function filon_solve_hardcoded(
     @assert length(A_funcs) >= s + 1 "Must provide at least s+1 derivative functions (A, Ȧ, ..., A^(s))."
 
     dt = T / nsteps
-    u_n::Vector{ComplexF64} = convert(Vector{ComplexF64}, u0)
+    u_n = complex.(float.(u0))
     u_saves = [copy(u_n)]
 
     for n in 1:nsteps

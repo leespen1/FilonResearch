@@ -8,18 +8,19 @@ But this is the best type-stable way to do it I can think of while keeping it
 as general as possible. Issues like this are why I made the Controls interface
 in QuantumGateDesign.jl.
 """
-struct FilonProblem{T <: Tuple}
-    u0::Vector{ComplexF64}
-    tf::Float64
-    frequencies::Vector{Float64}
+struct FilonProblem{R <: AbstractFloat, T <: Tuple}
+    u0::Vector{Complex{R}}
+    tf::R
+    frequencies::Vector{R}
     A_deriv_funcs::T
     function FilonProblem(u0::AbstractVector{<: Number}, tf::Real, frequencies::AbstractVector{<: Real}, A_deriv_funcs::Tuple)
         @assert length(u0) == length(frequencies) "Must provide one frequency for each component of u0."
         @assert all(x -> isa(x, Function), A_deriv_funcs) "Each element of A_deriv_funcs must be a function."
-        new{typeof(A_deriv_funcs)}(
-            convert(Vector{ComplexF64}, u0),
-            convert(Float64, tf),
-            convert(Vector{Float64}, frequencies),
+        R = promote_type(real(float(eltype(u0))), typeof(float(tf)), float(eltype(frequencies)))
+        new{R, typeof(A_deriv_funcs)}(
+            convert(Vector{Complex{R}}, u0),
+            convert(R, tf),
+            convert(Vector{R}, frequencies),
             A_deriv_funcs
         )
     end
@@ -77,11 +78,13 @@ function filon_timestep(
 
     N = length(u_n)
     rhs = u_n + Algorithm1(A_derivs_tn, u_n, frequencies, t_n, s, weights_explicit)
-    LHS = LinearMap(
+    LHS = LinearMap{Complex{real(float(eltype(u_n)))}}(
         u -> u - Algorithm1(A_derivs_tnp1, u, frequencies, t_np1, s, weights_implicit),
         N, N
     )
-    u_np1 = gmres(LHS, rhs, abstol=1e-13, reltol=1e-13)
+    double_precision_digits = 13 # use 1e-13 precision for Float64, scale for higher or lower precision
+    tol = eps(real(eltype(rhs)))^(double_precision_digits/16)
+    u_np1, ~ = Krylov.gmres(LHS, rhs, atol=tol, rtol=tol)
     return u_np1
 end
 
@@ -100,6 +103,7 @@ function get_LHS_mat(
     ;
     rescale::Bool=true
 )
+    T = real(float(eltype(u_n)))
     dt = t_np1 - t_n
 
     if rescale
@@ -121,11 +125,11 @@ function get_LHS_mat(
         N, N
     )
 
-    identity_mat = zeros(ComplexF64, N, N)
+    identity_mat = zeros(Complex{T}, N, N)
     for i in 1:N
         identity_mat[i,i] = 1
     end
-    LHS_mat = zeros(ComplexF64, N, N)
+    LHS_mat = zeros(Complex{T}, N, N)
 
     for i in 1:N
         mul!(view(LHS_mat, :, i), LHS, identity_mat[:,i])
@@ -166,11 +170,12 @@ function filon_timestep_integral_error(
 
     N = length(u_n)
     rhs = u_n + Algorithm1(A_derivs_tn, u_n, frequencies, t_n, s, weights_explicit)
-    LHS_map = LinearMap(
+    LHS_map = LinearMap{Complex{real(float(eltype(u_n)))}}(
         u -> u - Algorithm1(A_derivs_tnp1, u, frequencies, t_np1, s, weights_implicit),
         N, N
     )
-    lhs_vec = zeros(ComplexF64, N)
+    T = real(float(eltype(u_n)))
+    lhs_vec = zeros(Complex{T}, N)
     mul!(lhs_vec, LHS_map, u_np1)
 
     error = lhs_vec - rhs
@@ -196,7 +201,8 @@ function Algorithm1(
     # Compute f, ḟ, f̈, …, f⁽ˢ⁾
     f_derivs = multiple_general_leibniz_rule(freq_factor_derivs, u_derivs)
 
-    result = similar(u, ComplexF64)
+    T = real(float(eltype(u)))
+    result = similar(u, Complex{T})
     result .= 0
     for j = 0:s
         modified_f_derivs = [weights[1+j] .* f_k for f_k in f_derivs]

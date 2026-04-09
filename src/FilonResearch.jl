@@ -5,6 +5,15 @@ import Polynomials: Polynomial, derivative
 import LinearAlgebra: dot, mul!, I, Diagonal, cond, eigvals
 import LinearMaps: LinearMap
 import IterativeSolvers: gmres
+import Krylov
+
+# Toggle for the Taylor series branch in filon_moments.
+# When true (default), small-ω moments use a Taylor series to avoid
+# catastrophic cancellation in the oscillatory recurrence.
+# Set to false to use the oscillatory recurrence for all nonzero ω,
+# e.g. to reproduce the blow-up seen in the CNOT3 example:
+#   FilonResearch.USE_TAYLOR_MOMENTS[] = false
+const USE_TAYLOR_MOMENTS = Ref(true)
 
 include("filon_weights.jl")
 export filon_moments, filon_weights, hardcoded_filon_weights
