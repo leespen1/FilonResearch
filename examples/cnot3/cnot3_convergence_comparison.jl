@@ -46,7 +46,7 @@ max_power = 12      # cap at 2^12 = 4096 timesteps
 #ψ0_unnormalized[6] = 1
 
 # Change FloatType to change precision in Filon solves
-FloatType = Float128
+FloatType = Float64
 
 # Physical constants
 fa = 4.10595
@@ -185,10 +185,6 @@ lab_prob_original = dispersive_qudits_problem(
 
 rot_controls = get_controls(degree, D1, Cfreq, Tmax)
 
-# ============================================================
-# Convergence study configuration
-# ============================================================
-#
 ψ0_normalized = ψ0_unnormalized / norm(ψ0_unnormalized)
 u0_vec = Complex{FloatType}.(ψ0_normalized)
 
@@ -214,6 +210,8 @@ FilonResearch.USE_TAYLOR_MOMENTS[] = use_taylor_moments
 # ============================================================
 # Run experiments
 # ============================================================
+
+@show maximum(abs, frequencies_rot) minimum(abs, frequencies_rot)
 
 # Storage: s => (nsteps_list, [full_history_matrices])
 hermite_data = Dict{Int, Tuple{Vector{Int}, Vector{Matrix{ComplexF64}}}}()
@@ -501,7 +499,7 @@ hermite_marker = :circle
 filon0_marker  = :rect
 filonr_marker  = :diamond
 
-mkpath(joinpath(@__DIR__, "..", "Plots"))
+mkpath(joinpath(@__DIR__, "../..", "Plots"))
 
 # Helper: compute Richardson error vector from a list of history matrices (L2-in-time)
 function richardson_errors(hists, order, T)
@@ -531,8 +529,8 @@ for (i, ctrl) in enumerate(rot_controls)
 end
 Legend(fig1[1, 2], ax1, framevisible=false)
 
-save(joinpath(@__DIR__, "..", "Plots", "$(_plot_prefix)_control_functions.png"), fig1)
-save(joinpath(@__DIR__, "..", "Plots", "$(_plot_prefix)_control_functions.pdf"), fig1)
+save(joinpath(@__DIR__, "../..", "Plots", "$(_plot_prefix)_control_functions.png"), fig1)
+#save(joinpath(@__DIR__, "../..", "Plots", "$(_plot_prefix)_control_functions.pdf"), fig1)
 println("\nSaved: Plots/$(_plot_prefix)_control_functions.{png,pdf}")
 
 # ---- Figure 2: State Evolution ----
@@ -564,8 +562,8 @@ for k in 1:N
 end
 Colorbar(fig2[1:2, 2], colormap=:viridis, limits=(1, N), label=L"k")
 
-save(joinpath(@__DIR__, "..", "Plots", "$(_plot_prefix)_state_evolution.png"), fig2)
-save(joinpath(@__DIR__, "..", "Plots", "$(_plot_prefix)_state_evolution.pdf"), fig2)
+save(joinpath(@__DIR__, "../..", "Plots", "$(_plot_prefix)_state_evolution.png"), fig2)
+#save(joinpath(@__DIR__, "../..", "Plots", "$(_plot_prefix)_state_evolution.pdf"), fig2)
 println("Saved: Plots/$(_plot_prefix)_state_evolution.{png,pdf}")
 
 # ---- Figure 3: Method Convergence (Richardson Errors) ----
@@ -622,8 +620,8 @@ for (col, s) in enumerate(s_values)
 end
 Legend(fig3[2, 1:n_s], ax_first, orientation=:horizontal, tellheight=true, tellwidth=false)
 
-save(joinpath(@__DIR__, "..", "Plots", "$(_plot_prefix)_convergence_richardson.png"), fig3)
-save(joinpath(@__DIR__, "..", "Plots", "$(_plot_prefix)_convergence_richardson.pdf"), fig3)
+save(joinpath(@__DIR__, "../..", "Plots", "$(_plot_prefix)_convergence_richardson.png"), fig3)
+#save(joinpath(@__DIR__, "../..", "Plots", "$(_plot_prefix)_convergence_richardson.pdf"), fig3)
 println("Saved: Plots/$(_plot_prefix)_convergence_richardson.{png,pdf}")
 
 # ---- Figure 4: Combined (controls, state evolution, convergence) ----
@@ -703,8 +701,8 @@ for (col, s) in enumerate(s_values)
 end
 Legend(fig4[5, 1:n_s], ax4_first, orientation=:horizontal, tellheight=true, tellwidth=false)
 
-save(joinpath(@__DIR__, "..", "Plots", "$(_plot_prefix)_cnot3_combined.png"), fig4)
-save(joinpath(@__DIR__, "..", "Plots", "$(_plot_prefix)_cnot3_combined.pdf"), fig4)
+save(joinpath(@__DIR__, "../..", "Plots", "$(_plot_prefix)_cnot3_combined.png"), fig4)
+#save(joinpath(@__DIR__, "../..", "Plots", "$(_plot_prefix)_cnot3_combined.pdf"), fig4)
 println("Saved: Plots/$(_plot_prefix)_cnot3_combined.{png,pdf}")
 
 display(fig1)
