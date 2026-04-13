@@ -24,11 +24,11 @@ using Quadmath
 # Subsystem dimensions
 N_osc_levels = 10 # default 10
 N_guard_levels = 2 # default 2
-Tmax = 100.0 # default 550.0
+Tmax = 550.0 # default 550.0
 
 # Which methods to run (Filon with rotating-frame frequencies is always run)
 run_hermite = true
-run_filon_zero = false
+run_filon_zero = true
 
 # Whether to use Taylor series branch in filon_moments for small ω.
 # Set to false to reproduce catastrophic cancellation blow-up.
@@ -37,7 +37,7 @@ use_taylor_moments = true
 # To control which versions of Filon, which stepsizes are used
 s_values = [0, 1, 2]
 min_power = 2       # start at 2^2 = 4 timesteps
-max_power = 12      # cap at 2^12 = 4096 timesteps
+max_power = 14      # cap at 2^12 = 4096 timesteps
 
 # To control initial condition (will be normalized)
 # CNOT3 Gate intitial conditions for HOHO paper example are e⃗₁, e⃗₂, e⃗₅, and e⃗₆
@@ -69,10 +69,10 @@ Nfreq = 3 # Number of carrier wave frequencies for each control function
 # Currently not handling time-dependence in H(t), so best keep these zero
 Cfreq = zeros(Nctrl, Nfreq) 
 ## Values used in HOHO experiment
-#Cfreq[1:2,2] .= -2.0*pi*xa
-#Cfreq[1:2,3] .= -2.0*pi*xb
-#Cfreq[3,2] = -2.0*pi*xas
-#Cfreq[3,3] = -2.0*pi*xbs
+Cfreq[1:2,2] .= -2.0*pi*xa
+Cfreq[1:2,3] .= -2.0*pi*xb
+Cfreq[3,2] = -2.0*pi*xas
+Cfreq[3,3] = -2.0*pi*xbs
 
 # ============================================================
 # Helper functions (from bspline_test.jl)
@@ -183,7 +183,9 @@ lab_prob_original = dispersive_qudits_problem(
 )
 =#
 
-rot_controls = get_controls(degree, D1, Cfreq, Tmax)
+
+const Tmax_original = 550.0 # Want to use 550.0 so that the controls aren't "squeezed" into a smaller timeframe.
+rot_controls = get_controls(degree, D1, Cfreq, Tmax_original)
 
 ψ0_normalized = ψ0_unnormalized / norm(ψ0_unnormalized)
 u0_vec = Complex{FloatType}.(ψ0_normalized)
@@ -218,6 +220,11 @@ hermite_data = Dict{Int, Tuple{Vector{Int}, Vector{Matrix{ComplexF64}}}}()
 filon_zero_data = Dict{Int, Tuple{Vector{Int}, Vector{Matrix{ComplexF64}}}}()
 filon_rot_data = Dict{Int, Tuple{Vector{Int}, Vector{Matrix{ComplexF64}}}}()
 
+# Storage for per-method wall-clock time (seconds), indexed by s
+hermite_times = Dict{Int, Vector{Float64}}()
+filon_zero_times = Dict{Int, Vector{Float64}}()
+filon_rot_times = Dict{Int, Vector{Float64}}()
+
 
 fmt(x) = @sprintf("%12.4e", x)
 
@@ -238,9 +245,11 @@ for s in s_values
     if run_hermite;    push!(header_parts, @sprintf("%-12s", "|u|_H"));  end
     if run_filon_zero; push!(header_parts, @sprintf("%-12s", "|u|_F0")); end
     push!(header_parts, @sprintf("%-12s", "|u|_Fr"))
-    push!(header_parts, "time")
+    if run_hermite;    push!(header_parts, @sprintf("%-10s", "t_H"));  end
+    if run_filon_zero; push!(header_parts, @sprintf("%-10s", "t_F0")); end
+    push!(header_parts, @sprintf("%-10s", "t_Fr"))
     println("  " * join(header_parts, "  "))
-    println("  " * "-"^130)
+    println("  " * "-"^150)
 
     h_hists = Matrix{ComplexF64}[]
     f0_hists = Matrix{ComplexF64}[]
@@ -248,6 +257,9 @@ for s in s_values
     nsteps_h = Int[]
     nsteps_f0 = Int[]
     nsteps_fr = Int[]
+    h_times = Float64[]
+    f0_times = Float64[]
+    fr_times = Float64[]
 
     prev_h_rich = NaN
     prev_fr_rich = NaN
@@ -255,27 +267,38 @@ for s in s_values
     for k in min_power:max_power
         ns = 2^k
 
-        t_start = time()
+        t_h = NaN
+        t_f0 = NaN
+        t_fr = NaN
 
         # Hermite
         if run_hermite
             rot_vec_prob.nsteps = ns
+            t0 = time()
             hist = eval_forward(rot_vec_prob, rot_controls, pcof, order=order)
+            t_h = time() - t0
             push!(h_hists, Matrix{ComplexF64}(hist))
             push!(nsteps_h, ns)
+            push!(h_times, t_h)
         end
 
         # Filon (zero frequencies)
         if run_filon_zero
+            t0 = time()
             hist = filon_solve(A_deriv_funcs, u0_vec, frequencies_zero, Tmax, ns, s)
+            t_f0 = time() - t0
             push!(f0_hists, Matrix{ComplexF64}(hist))
             push!(nsteps_f0, ns)
+            push!(f0_times, t_f0)
         end
 
         # Filon (rotating frame frequencies)
+        t0 = time()
         hist = filon_solve(A_deriv_funcs, u0_vec, frequencies_rot, Tmax, ns, s)
+        t_fr = time() - t0
         push!(fr_hists, Matrix{ComplexF64}(hist))
         push!(nsteps_fr, ns)
+        push!(fr_times, t_fr)
 
         # Richardson errors and convergence orders (L2-in-time norm)
         if run_hermite && length(h_hists) >= 2
@@ -298,9 +321,10 @@ for s in s_values
             fr_ord_str  = "  --- "
         end
 
-        # Elapsed time
-        elapsed = time() - t_start
-        time_str = elapsed < 60 ? @sprintf("%.1fs", elapsed) : @sprintf("%.1fm", elapsed/60)
+        # Per-method elapsed time formatter
+        fmt_time(t) = isnan(t) ? "    ---   " :
+                      (t < 60 ? @sprintf("%-10s", @sprintf("%.2fs", t)) :
+                                @sprintf("%-10s", @sprintf("%.2fm", t/60)))
 
         # Build output line
         row_parts = [@sprintf("%-8d", ns)]
@@ -314,7 +338,9 @@ for s in s_values
         if run_hermite;    push!(row_parts, @sprintf("%12.2e", norm(h_hists[end][:,end])));  end
         if run_filon_zero; push!(row_parts, @sprintf("%12.2e", norm(f0_hists[end][:,end]))); end
         push!(row_parts, @sprintf("%12.2e", norm(fr_hists[end][:,end])))
-        push!(row_parts, time_str)
+        if run_hermite;    push!(row_parts, fmt_time(t_h));  end
+        if run_filon_zero; push!(row_parts, fmt_time(t_f0)); end
+        push!(row_parts, fmt_time(t_fr))
 
         println("  " * join(row_parts, "  "))
     end
@@ -322,6 +348,9 @@ for s in s_values
     hermite_data[s] = (nsteps_h, h_hists)
     filon_zero_data[s] = (nsteps_f0, f0_hists)
     filon_rot_data[s] = (nsteps_fr, fr_hists)
+    hermite_times[s] = h_times
+    filon_zero_times[s] = f0_times
+    filon_rot_times[s] = fr_times
 end
 
 # ============================================================
@@ -529,9 +558,9 @@ for (i, ctrl) in enumerate(rot_controls)
 end
 Legend(fig1[1, 2], ax1, framevisible=false)
 
-save(joinpath(@__DIR__, "../..", "Plots", "$(_plot_prefix)_control_functions.png"), fig1)
-#save(joinpath(@__DIR__, "../..", "Plots", "$(_plot_prefix)_control_functions.pdf"), fig1)
-println("\nSaved: Plots/$(_plot_prefix)_control_functions.{png,pdf}")
+save(joinpath(@__DIR__, "../..", "Plots", "cnot3_control_functions_$(_plot_prefix).png"), fig1)
+#save(joinpath(@__DIR__, "../..", "Plots", "cnot3_control_functions_$(_plot_prefix).pdf"), fig1)
+println("\nSaved: Plots/cnot3_control_functions_$(_plot_prefix).{png,pdf}")
 
 # ---- Figure 2: State Evolution ----
 # Use the finest Hermite solution (highest s, max nsteps) for the state history
@@ -562,9 +591,9 @@ for k in 1:N
 end
 Colorbar(fig2[1:2, 2], colormap=:viridis, limits=(1, N), label=L"k")
 
-save(joinpath(@__DIR__, "../..", "Plots", "$(_plot_prefix)_state_evolution.png"), fig2)
-#save(joinpath(@__DIR__, "../..", "Plots", "$(_plot_prefix)_state_evolution.pdf"), fig2)
-println("Saved: Plots/$(_plot_prefix)_state_evolution.{png,pdf}")
+save(joinpath(@__DIR__, "../..", "Plots", "cnot3_state_evolution_$(_plot_prefix).png"), fig2)
+#save(joinpath(@__DIR__, "../..", "Plots", "cnot3_state_evolution_$(_plot_prefix).pdf"), fig2)
+println("Saved: Plots/cnot3_state_evolution_$(_plot_prefix).{png,pdf}")
 
 # ---- Figure 3: Method Convergence (Richardson Errors) ----
 
@@ -620,9 +649,59 @@ for (col, s) in enumerate(s_values)
 end
 Legend(fig3[2, 1:n_s], ax_first, orientation=:horizontal, tellheight=true, tellwidth=false)
 
-save(joinpath(@__DIR__, "../..", "Plots", "$(_plot_prefix)_convergence_richardson.png"), fig3)
-#save(joinpath(@__DIR__, "../..", "Plots", "$(_plot_prefix)_convergence_richardson.pdf"), fig3)
-println("Saved: Plots/$(_plot_prefix)_convergence_richardson.{png,pdf}")
+save(joinpath(@__DIR__, "../..", "Plots", "cnot3_convergence_richardson_$(_plot_prefix).png"), fig3)
+#save(joinpath(@__DIR__, "../..", "Plots", "cnot3_convergence_richardson_$(_plot_prefix).pdf"), fig3)
+println("Saved: Plots/cnot3_convergence_richardson_$(_plot_prefix).{png,pdf}")
+
+# ---- Figure 3b: Wall-clock time per method ----
+
+fig3b = Figure(size=(min(6.5, 2.5*n_s) * inch, 3.5inch), fontsize=12)
+Label(fig3b[0, 1:n_s],
+    L"\textbf{Wall-Clock Time per Method}",
+    fontsize=14)
+
+ax_time_first = nothing
+for (col, s) in enumerate(s_values)
+    order = 2*(s+1)
+    h_nsteps, _ = hermite_data[s]
+    f0_nsteps, _ = filon_zero_data[s]
+    fr_nsteps, _ = filon_rot_data[s]
+
+    ax = Axis(fig3b[1, col],
+        title=L"s=%$s \;\; (p=%$order)",
+        xlabel=L"\mathrm{nsteps}",
+        ylabel= col == 1 ? L"\mathrm{Time\; (s)}" : "",
+        xscale=log10, yscale=log10,
+        yticklabelsvisible = true,
+    )
+
+    if run_hermite
+        scatterlines!(ax, h_nsteps, hermite_times[s],
+            color=hermite_color, marker=hermite_marker, label="Hermite")
+    end
+
+    if run_filon_zero
+        scatterlines!(ax, f0_nsteps, filon_zero_times[s],
+            color=filon0_color, marker=filon0_marker, label=L"\mathrm{Filon}\;(\omega=0)")
+    end
+
+    scatterlines!(ax, fr_nsteps, filon_rot_times[s],
+        color=filonr_color, marker=filonr_marker, label=L"\mathrm{Filon}\;(\omega=\mathrm{rot})")
+
+    # Linear reference (ideal O(nsteps) scaling)
+    ref_ns = [2.0^k for k in min_power:max_power]
+    ref_base = run_hermite ? hermite_times[s][1] : filon_rot_times[s][1]
+    ref_line = ref_base .* (ref_ns ./ ref_ns[1])
+    lines!(ax, ref_ns, ref_line, linestyle=:dot, color=:gray, linewidth=2, label=L"O(\mathrm{nsteps})")
+
+    if col == 1
+        global ax_time_first = ax
+    end
+end
+Legend(fig3b[2, 1:n_s], ax_time_first, orientation=:horizontal, tellheight=true, tellwidth=false)
+
+save(joinpath(@__DIR__, "../..", "Plots", "cnot3_timing_$(_plot_prefix).png"), fig3b)
+println("Saved: Plots/cnot3_timing_$(_plot_prefix).{png,pdf}")
 
 # ---- Figure 4: Combined (controls, state evolution, convergence) ----
 
@@ -701,11 +780,12 @@ for (col, s) in enumerate(s_values)
 end
 Legend(fig4[5, 1:n_s], ax4_first, orientation=:horizontal, tellheight=true, tellwidth=false)
 
-save(joinpath(@__DIR__, "../..", "Plots", "$(_plot_prefix)_cnot3_combined.png"), fig4)
-#save(joinpath(@__DIR__, "../..", "Plots", "$(_plot_prefix)_cnot3_combined.pdf"), fig4)
-println("Saved: Plots/$(_plot_prefix)_cnot3_combined.{png,pdf}")
+save(joinpath(@__DIR__, "../..", "Plots", "cnot3_combined_$(_plot_prefix).png"), fig4)
+#save(joinpath(@__DIR__, "../..", "Plots", "cnot3_combined_$(_plot_prefix).pdf"), fig4)
+println("Saved: Plots/cnot3_combined_$(_plot_prefix).{png,pdf}")
 
 display(fig1)
 display(fig2)
 display(fig3)
+display(fig3b)
 display(fig4)
