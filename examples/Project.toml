@@ -1,0 +1,13 @@
+[deps]
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+DrWatson = "634d3b9d-ee7a-5ddf-bec9-22491ea816e1"
+FilonResearch = "3a284e70-3988-4fde-94af-e81b1d70ca0a"
+JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
+LaTeXStrings = "b964fa9f-0449-5b57-a5c2-d3ea65f4040f"
+Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
+Quadmath = "be4d8f0f-7fa4-5f49-b795-2f01399ab2dd"
+QuantumGateDesign = "f716b271-9d99-4329-8adc-fa1e42d5b881"
+
+[sources]
+FilonResearch = {path = ".."}
+QuantumGateDesign = {url = "https://github.com/leespen1/QuantumGateDesign.jl.git"}
