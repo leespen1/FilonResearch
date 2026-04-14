@@ -82,7 +82,7 @@ function filon_timestep(
         u -> u - Algorithm1(A_derivs_tnp1, u, frequencies, t_np1, s, weights_implicit),
         N, N
     )
-    double_precision_digits = 13 # use 1e-13 precision for Float64, scale for higher or lower precision
+    double_precision_digits = 15 # use 1e-13 precision for Float64, scale for higher or lower precision
     tol = eps(real(eltype(rhs)))^(double_precision_digits/16)
     u_np1, ~ = Krylov.gmres(LHS, rhs, atol=tol, rtol=tol)
     return u_np1

@@ -1,22 +1,11 @@
-# cnot3_collect_data.jl
-#
-# Collect convergence data for Filon and Hermite methods on CNOT3 gate problem.
-# Each (method, s, nsteps) solve is cached individually via DrWatson's
-# produce_or_load, so re-running only computes missing results.
-#
-# Pass --force to recompute everything (e.g. after source code changes).
-#
-# Usage:
-#   julia --project=examples examples/cnot3/cnot3_collect_data.jl
-#   julia --project=examples examples/cnot3/cnot3_collect_data.jl --force
-
-using DrWatson
 using QuantumGateDesign
 using FilonResearch
 using LinearAlgebra
 using Printf
 using JLD2
 using Quadmath
+using Profile
+using PProf
 
 const REPO_ROOT = dirname(dirname(@__DIR__))
 force_recompute = "--force" in ARGS
@@ -82,32 +71,6 @@ Cfreq[3,3] = -2.0*pi*xbs
 # ============================================================
 # Helper functions
 # ============================================================
-
-function l2_time_error_subsample(hist_fine, hist_coarse, T)
-    N_fine = size(hist_fine, 2) - 1
-    N_coarse = size(hist_coarse, 2) - 1
-    stride = N_fine ÷ N_coarse
-    dt = T / N_coarse
-    err_sq = sum(norm(hist_fine[:, 1 + (k-1)*stride] - hist_coarse[:, k])^2 for k in 1:N_coarse+1)
-    return sqrt(dt * err_sq)
-end
-
-function load_previous_hist(experiment_dir, method, s, nsteps_prev)
-    prev_config = Dict("method" => method, "s" => s, "nsteps" => nsteps_prev)
-    prev_file = joinpath(experiment_dir, savename(prev_config, "jld2"))
-    if isfile(prev_file)
-        return load(prev_file)["hist"]
-    end
-    return nothing
-end
-
-function compute_richardson_err(hist_curr, hist_prev, order, T)
-    if hist_prev === nothing
-        return NaN
-    end
-    l2_err = l2_time_error_subsample(hist_curr, hist_prev, T)
-    return l2_err * 2^order / (2^order - 1)
-end
 
 function QGD_control_to_func_p(control::QuantumGateDesign.AbstractControl, pcof::AbstractVector{<: Real}, derivative_order::Integer)
     return t -> eval_p_derivative(control, t, pcof, derivative_order)
@@ -206,181 +169,13 @@ A_deriv_funcs = ntuple(
 # Apply Taylor moments toggle
 FilonResearch.USE_TAYLOR_MOMENTS[] = use_taylor_moments
 
-# ============================================================
-# Build experiment prefix (encodes global parameters)
-# ============================================================
+s = 0
 
-if all(iszero, pcof)
-    _pcof_tag = "pcof-zero"
-elseif length(unique(pcof)) == 1
-    _pcof_tag = "pcof-const$(pcof[1])"
-elseif length(unique(pcof)) > 10
-    _pcof_tag = "pcof-orig"
-else
-    _pcof_tag = "pcof-other"
-end
+# To get compilation out of the way
+rot_vec_prob.nsteps = 1
+@profile hist = filon_solve(A_deriv_funcs, u0_vec, frequencies_rot, Tmax, nsteps, s)
 
-_size_tag = "Nosc$(N_osc_levels)_Nguard$(N_guard_levels)"
-_taylor_tag = use_taylor_moments ? "taylor-on" : "taylor-off"
-
-_nonzero_idx = findall(!iszero, ψ0_unnormalized)
-if length(_nonzero_idx) == 1
-    _ic_tag = "ic-e$(_nonzero_idx[1])"
-elseif length(_nonzero_idx) == length(ψ0_unnormalized) && length(unique(ψ0_unnormalized)) == 1
-    _ic_tag = "ic-uniform"
-else
-    _ic_tag = "ic-other"
-end
-
-_cfreq_tag = all(iszero, Cfreq) ? "Cfreq-zero" : "Cfreq-nonzero"
-_tmax_tag = "T$(Tmax)"
-_float_tag = "$(FloatType)"
-
-plot_prefix = join([_pcof_tag, _size_tag, _taylor_tag, _ic_tag, _cfreq_tag, _tmax_tag, _float_tag], "_")
-println("Experiment prefix: $(plot_prefix)")
-
-# Each experiment configuration gets its own subdirectory
-experiment_dir = joinpath(@__DIR__, "data", plot_prefix)
-mkpath(experiment_dir)
-
-# ============================================================
-# Save experiment metadata up-front
-# ============================================================
-#
-# Per-run results (histories, timings, Richardson errors) live in the
-# individual method=*_nsteps=*_s=*.jld2 files written by produce_or_load.
-# The plotting script scans those files directly; metadata.jld2 just holds
-# experiment-level parameters the filenames don't encode. We write it now
-# (before the main loop) so that early interruptions still leave valid
-# metadata on disk for the plotting script to load.
-
-metadata_file = joinpath(experiment_dir, "metadata.jld2")
-jldsave(metadata_file;
-    Tmax,
-    plot_prefix,
-    Cfreq,
-    pcof,
-    degree,
-    D1,
-)
-println("Saved metadata to: $(metadata_file)")
-
-# ============================================================
-# Check git state
-# ============================================================
-
-current_commit = try
-    strip(read(`git -C $REPO_ROOT rev-parse HEAD`, String))
-catch
-    "unknown"
-end
-
-src_dirty = try
-    !isempty(strip(read(`git -C $REPO_ROOT status --porcelain -- src/`, String)))
-catch
-    false
-end
-
-if src_dirty && !force_recompute
-    @warn "Repository has uncommitted changes in src/. Cached results may be stale. Use --force to recompute."
-end
-
-if force_recompute
-    println("--force: all results will be recomputed.")
-end
-
-# ============================================================
-# Run experiments with per-run caching
-# ============================================================
-
-@show maximum(abs, frequencies_rot) minimum(abs, frequencies_rot)
-
-fmt(x) = @sprintf("%12.4e", x)
-
-for k in min_power:max_power
-    ns = 2^k
-
-    println("\n" * "="^100)
-    println("nsteps=$ns (2^$k)")
-    println("="^100)
-
-    for s in s_values
-        order = 2*(s+1)
-
-        # --- Hermite ---
-        if run_hermite
-            config = Dict("method" => "hermite", "s" => s, "nsteps" => ns)
-            data, _ = produce_or_load(config, experiment_dir;
-                    suffix="jld2", tag=true, gitpath=REPO_ROOT,
-                    force=force_recompute) do config
-                rot_vec_prob.nsteps = config["nsteps"]
-                t0 = time()
-                saveEveryNsteps = ns > 8 ? 2^(k-3) : ns
-                hist = eval_forward(rot_vec_prob, rot_controls, pcof, order=2*(config["s"]+1), saveEveryNsteps=saveEveryNsteps)
-                ncols = size(hist, 2)
-                if ncols < 1+8
-                    idx = round.(Int, range(1, ncols, length=1+8))
-                    hist_downsampled = hist[:,idx]
-                else
-                    hist_downsampled = hist
-                end
-                elapsed = time() - t0
-                hist_prev = load_previous_hist(experiment_dir, "hermite", config["s"], config["nsteps"] ÷ 2)
-                rich_err = compute_richardson_err(Matrix{ComplexF64}(hist_downsampled), hist_prev, 2*(config["s"]+1), Tmax)
-                Dict("hist" => Matrix{ComplexF64}(hist_downsampled), "elapsed" => elapsed, "richardson_err" => rich_err)
-            end
-            @printf("  s=%d  Hermite    |u|=%8.2e  RE=%8.2e  (%.2fs)\n",
-                    s, norm(data["hist"][:,end]), data["richardson_err"], data["elapsed"])
-        end
-
-        # --- Filon (zero frequencies) ---
-        if run_filon_zero
-            config = Dict("method" => "filon_zero", "s" => s, "nsteps" => ns)
-            data, _ = produce_or_load(config, experiment_dir;
-                    suffix="jld2", tag=true, gitpath=REPO_ROOT,
-                    force=force_recompute) do config
-                t0 = time()
-                hist = filon_solve(A_deriv_funcs, u0_vec, frequencies_zero, Tmax, config["nsteps"], config["s"])
-                ncols = size(hist, 2)
-                if ncols < 1+8
-                    idx = round.(Int, range(1, ncols, length=1+8))
-                    hist_downsampled = hist[:,idx]
-                else
-                    hist_downsampled = hist
-                end
-                elapsed = time() - t0
-                hist_prev = load_previous_hist(experiment_dir, "filon_zero", config["s"], config["nsteps"] ÷ 2)
-                rich_err = compute_richardson_err(Matrix{ComplexF64}(hist_downsampled), hist_prev, 2*(config["s"]+1), Tmax)
-                Dict("hist" => Matrix{ComplexF64}(hist_downsampled), "elapsed" => elapsed, "richardson_err" => rich_err)
-            end
-            @printf("  s=%d  Filon(w=0) |u|=%8.2e  RE=%8.2e  (%.2fs)\n",
-                    s, norm(data["hist"][:,end]), data["richardson_err"], data["elapsed"])
-        end
-
-        # --- Filon (rotating frame frequencies) ---
-        if run_filon_rot
-            config = Dict("method" => "filon_rot", "s" => s, "nsteps" => ns)
-            data, _ = produce_or_load(config, experiment_dir;
-                    suffix="jld2", tag=true, gitpath=REPO_ROOT,
-                    force=force_recompute) do config
-                t0 = time()
-                hist = filon_solve(A_deriv_funcs, u0_vec, frequencies_rot, Tmax, config["nsteps"], config["s"])
-                ncols = size(hist, 2)
-                if ncols < 1+8
-                    idx = round.(Int, range(1, ncols, length=1+8))
-                    hist_downsampled = hist[:,idx]
-                else
-                    hist_downsampled = hist
-                end
-                elapsed = time() - t0
-                hist_prev = load_previous_hist(experiment_dir, "filon_rot", config["s"], config["nsteps"] ÷ 2)
-                rich_err = compute_richardson_err(Matrix{ComplexF64}(hist_downsampled), hist_prev, 2*(config["s"]+1), Tmax)
-                Dict("hist" => Matrix{ComplexF64}(hist_downsampled), "elapsed" => elapsed, "richardson_err" => rich_err)
-            end
-            @printf("  s=%d  Filon(rot) |u|=%8.2e  RE=%8.2e  (%.2fs)\n",
-                    s, norm(data["hist"][:,end]), data["richardson_err"], data["elapsed"])
-        end
-    end
-end
-
-println("\nDone. Metadata at: $(metadata_file)")
+# Actual profile run
+rot_vec_prob.nsteps = 2^12
+Profile.clear()
+@profile hist = filon_solve(A_deriv_funcs, u0_vec, frequencies_rot, Tmax, nsteps, s)
