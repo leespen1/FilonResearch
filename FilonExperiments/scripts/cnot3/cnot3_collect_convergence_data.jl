@@ -1,0 +1,254 @@
+
+# cnot3_collect_data.jl
+#
+# Collect convergence data for Filon and Hermite methods on CNOT3 gate problem.
+# Each (method, s, nsteps) solve is cached individually via DrWatson's
+# produce_or_load, so re-running only computes missing results.
+#
+# Pass --force to recompute everything (e.g. after source code changes).
+#
+# Usage:
+#   julia --project=examples examples/cnot3/cnot3_collect_data.jl
+#   julia --project=examples examples/cnot3/cnot3_collect_data.jl --force
+
+using DrWatson
+@quickactivate "FilonExperiments"
+using FilonResearch, QuantumGateDesign, Printf
+using LinearAlgebra: norm, diag
+include(srcdir("error_analysis.jl"))
+include(srcdir("cnot3_hoho_helpers.jl"))
+include(srcdir("QuantumGateDesign_interface.jl"))
+
+outdir = datadir("cnot3_convergence")
+fmt(x) = @sprintf("%3.2e", x)
+
+
+# ============================================================
+# Experiment parameters - Frequently Changed
+# ============================================================
+
+# Subsystem dimensions
+nOscLevels = 10 # default 10
+nGuardLevels = 2 # default 2
+Tmax = 100.0 # default 550.0
+
+refinement_factor = 2
+
+# For each s-value of the Filon method, run test for various numbers of timesteps
+# (if timesteps are floats, will be rounded *up*)
+filon_s_to_nsteps = (
+    0 => refinement_factor .^ (2:16),
+    1 => refinement_factor .^ (2:16),
+    2 => refinement_factor .^ (2:16),
+)
+
+hermite_s_to_nsteps = (
+    0 => refinement_factor .^ (2:22),
+    1 => refinement_factor .^ (2:22),
+    2 => refinement_factor .^ (2:22),
+)
+
+nsaves = 16 # Number of time points (after initial condition) to save to jld2 files
+initialCondition = "uniform" # uniform, or eN, where N is an integer
+
+# ===================
+# Helper functions
+# ===================
+
+
+function make_initial_condition(spec, n::Integer)
+    if spec == "uniform" # Uniform superposition
+        u0 = ones(ComplexF64, n)
+        return u0 ./ norm(u0)
+    elseif spec isa AbstractString # Basis vector (string parsed version)
+        m = match(r"^e(\d+)$", spec)
+        if m !== nothing
+            k = parse(Int, m.captures[1])
+            1 <= k <= n || throw(ArgumentError("basis index must be between 1 and $n"))
+            u0 = zeros(ComplexF64, n)
+            u0[k] = 1.0
+            return u0
+        end
+    end
+
+    throw(ArgumentError("unknown initial condition spec: $spec"))
+end
+
+# ==============================
+# The main simulation
+# Solve the ODE with a given config.
+# ==============================
+function run_simulation(config)
+    qgd_prob = cnot3_hoho_qgd_prob(
+        N_osc_levels = config.nOscLevels,
+        N_guard_levels = config.nGuardLevels,
+        Tmax = config.Tmax
+    ) 
+    # Parse config
+    initial_condition = make_initial_condition(config.initialCondition, qgd_prob.N_tot_levels)
+
+    # Infer from config
+    order = 2*(config.s+1)
+    t_saves = collect(range(0, config.Tmax, length=1+config.nsaves))
+
+    controls, pcof = cnot3_hoho_controls_and_pcof()
+
+    if config.method == :hermite
+        saveEveryNsteps, remainder = divrem(config.nsteps, config.nsaves)
+        remainder == 0 || throw(ArgumentError("Number of saves ($nsaves) and number of timesteps ($(config.nsteps)) are incompatible (remainder = $remainder)."))
+
+        prob = QuantumGateDesign.VectorSchrodingerProb(qgd_prob, 1)
+        prob.u0 .= real(initial_condition)
+        prob.v0 .= imag(initial_condition)
+
+        # Run once to get compilation out of the way
+        prob.nsteps = 1
+        t_elapsed = @elapsed history = eval_forward(
+            prob, controls, pcof, order=order,
+        )
+        # Run again, for real this time
+        prob.nsteps = config.nsteps
+        t_elapsed = @elapsed history = eval_forward(
+            prob, controls, pcof, order=order, saveEveryNsteps=saveEveryNsteps,
+        )
+    elseif config.method == :filon
+        A_deriv_funcs = QGD_prob_to_filon_hamiltonian(qgd_prob, controls, pcof, config.s)
+        filon_freqs = -1.0 .* Array(diag(qgd_prob.system_sym))
+
+        # Run once to get compilation out of the way
+        dummy_nsteps = 1
+        t_elapsed = @elapsed history = filon_solve(
+            A_deriv_funcs, initial_condition, filon_freqs, Tmax, dummy_nsteps, config.s,
+        )
+        # Run again, for real this time
+        t_elapsed = @elapsed history = filon_solve(
+            A_deriv_funcs, initial_condition, filon_freqs, Tmax, config.nsteps, config.s,
+        )
+    else
+        throw(ArgumentError("Invalid method '$(config.method)'. Method must be either 'hermite' or 'filon'."))
+    end
+
+    # Downsample history and store
+    history = downsample_history(history, config.nsaves)
+
+    return @strdict history t_elapsed t_saves
+end
+
+# TODO Add richardson extrapolation error
+# Don't necessarily need to use the 'previous' history, just the most recent
+# one with fewer errors. Don't log it in the results either, just use it for
+# display if it's there
+# TODO in a distributed context, I would like to collect all configs into one big vector, then use a pmap over those
+# =========================
+# Collect data
+# =========================
+
+"""
+Run the simulation defined by config. Return true if the simulation completes
+sucessfully. Return false otherwise.
+"""
+function process_config(config)
+    # input validation
+    if config.nsteps < config.nsaves
+        @warn "Number of timesteps is less than number of saves" config.nsteps config.nsaves maxlog=3
+        return false
+    end
+    if rem(config.nsteps, config.nsaves) != 0
+        @warn "Number of saves does not divide the number of timesteps" config.nsteps config.nsaves maxlog=3
+        return false
+    end
+
+    data, file = produce_or_load(
+        run_simulation,
+        config,
+        outdir,
+        filename = c -> savename("cnot3", c, sort=false),
+    )
+    # If there is a previous solution which this is a refinement of,
+    # then approximate the error using Richardson extrapolation.
+    prev_config = (config..., nsteps = div(config.nsteps, refinement_factor))
+    prev_savename = savename("cnot3", prev_config, sort=false)
+    prev_file = prev_savename * ".jld2"
+    prev_path = joinpath(outdir, prev_file)
+    if isfile(prev_path)
+        prev_data = load(prev_path)
+        order = 2*(config.s+1)
+
+        rich_l2_err = richardson_l2_integral_error(
+            data["history"], prev_data["history"], 
+            config.nsteps, prev_config.nsteps, config.Tmax, order,
+        )
+    
+        rich_final_err = richardson_error(
+            data["history"][:,end], prev_data["history"][:,end], 
+            config.nsteps, prev_config.nsteps, order,
+        )
+    else
+        rich_l2_err = missing
+        rich_final_err = missing
+    end
+
+    # Compute log_{refinement_factor}(nsteps)
+    level = round(Int, log(config.nsteps) / log(refinement_factor))
+    @printf(
+        "method=%-8s s=%-2d nsteps=%-8d level=%-3d final_err=%-12s l2_err=%-12s t_elapsed=%-10.4e\n",
+        config.method,
+        config.s,
+        config.nsteps,
+        level,
+        ismissing(rich_final_err) ? "missing" : fmt(rich_final_err),
+        ismissing(rich_l2_err)   ? "missing" : fmt(rich_l2_err),
+        data["t_elapsed"],
+    )
+
+    return true
+end
+
+configs = []
+
+for (s, nsteps_vec) in filon_s_to_nsteps
+    for nsteps_maybe_float in nsteps_vec
+        nsteps = round(Int, nsteps_maybe_float) 
+        # Create config as a NamedTuple [`(; x, y, ...)` infers variable names from arguments]
+        config = (;
+           method=:filon,
+           s,
+           Tmax,
+           initialCondition,
+           nOscLevels,
+           nGuardLevels,
+           nsaves,
+           nsteps,
+        )
+        push!(configs, config)
+    end
+end
+
+for (s, nsteps_vec) in hermite_s_to_nsteps
+    for nsteps_maybe_float in nsteps_vec
+        nsteps = round(Int, nsteps_maybe_float) 
+        # Create config as a NamedTuple [`(; x, y, ...)` infers variable names from arguments]
+        config = (;
+           method=:hermite,
+           s,
+           Tmax,
+           initialCondition,
+           nOscLevels,
+           nGuardLevels,
+           nsaves,
+           nsteps,
+        )
+        push!(configs, config)
+    end
+end
+
+# TODO if-else branch to distribute this depending on whether we are using distributed or not.
+for config in configs
+    process_config(config)
+end
+
+# Run a second time. Since all the simulations have already been run, this just prints a summary of the results.
+println("\n"^3, "-"^80, "\n"^3, "Finished running simulations. Printing summary table.\n")
+for config in configs
+    process_config(config)
+end
