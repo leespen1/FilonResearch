@@ -1,4 +1,9 @@
-Manifest.toml
-examples/Manifest.toml
-FilonProjectOverleaf/
 .claude/
+Manifest.toml
+FilonProjectOverleaf/
+
+FilonExperiments/data
+FilonExperiments/videos
+FilonExperiments/plots
+FilonExperiments/notebooks
+FilonExperiments/_research

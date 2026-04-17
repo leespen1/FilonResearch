@@ -151,7 +151,7 @@ function QGD_prob_to_controlled_op(prob::QuantumGateDesign.SchrodingerProb, cont
 end
 
 function get_controls(method_order::Integer, D1::Integer, Cfreq::AbstractMatrix{<: Real}, tf::Real)
-    degree = method_order
+    degree = method_order # WHAT? WHY DID I DO THIS?????
     base_bspline = QuantumGateDesign.FortranBSpline(degree, D1)
     base_control = QuantumGateDesign.FortranBSplineControl2(base_bspline, tf)
     controls = [CarrierControl(base_control, freqs) for freqs in eachrow(Cfreq)]
