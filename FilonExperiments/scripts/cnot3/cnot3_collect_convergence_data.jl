@@ -4,23 +4,6 @@
 # Collect convergence data for Filon and Hermite methods on CNOT3 gate problem.
 # Each (method, s, nsteps) solve is cached individually via DrWatson's
 # produce_or_load, so re-running only computes missing results.
-#
-# Pass --force to recompute everything (e.g. after source code changes).
-#
-# Usage:
-#   julia --project=examples examples/cnot3/cnot3_collect_data.jl
-#   julia --project=examples examples/cnot3/cnot3_collect_data.jl --force
-
-using DrWatson
-@quickactivate "FilonExperiments"
-using FilonResearch, QuantumGateDesign, Printf
-using LinearAlgebra: norm, diag
-include(srcdir("error_analysis.jl"))
-include(srcdir("cnot3_hoho_helpers.jl"))
-include(srcdir("QuantumGateDesign_interface.jl"))
-
-outdir = datadir("cnot3_convergence")
-fmt(x) = @sprintf("%3.2e", x)
 
 
 # ============================================================
@@ -32,29 +15,53 @@ nOscLevels = 10 # default 10
 nGuardLevels = 2 # default 2
 Tmax = 100.0 # default 550.0
 
-refinement_factor = 2
+refinementFactor = 2
 
 # For each s-value of the Filon method, run test for various numbers of timesteps
 # (if timesteps are floats, will be rounded *up*)
 filon_s_to_nsteps = (
-    0 => refinement_factor .^ (2:16),
-    1 => refinement_factor .^ (2:16),
-    2 => refinement_factor .^ (2:16),
+    0 => refinementFactor .^ (2:16),
+    1 => refinementFactor .^ (2:16),
+    2 => refinementFactor .^ (2:16),
 )
 
 hermite_s_to_nsteps = (
-    0 => refinement_factor .^ (2:22),
-    1 => refinement_factor .^ (2:22),
-    2 => refinement_factor .^ (2:22),
+    0 => refinementFactor .^ (2:22),
+    1 => refinementFactor .^ (2:22),
+    2 => refinementFactor .^ (2:22),
 )
 
 nsaves = 16 # Number of time points (after initial condition) to save to jld2 files
 initialCondition = "uniform" # uniform, or eN, where N is an integer
 
-# ===================
-# Helper functions
-# ===================
+# ============================================================
+# Set up distributed environment
+# ============================================================
+using DrWatson # This only sets up environment on master process
+@quickactivate "FilonExperiments"
 
+using Distributed, SlurmClusterManager
+
+if haskey(ENV, "SLURM_JOBID") || haskey(ENV, "SLURM_JOB_ID")
+    addprocs(SlurmManager())
+end
+
+
+# ============================================================
+# Set up functions for running simulations
+# ============================================================
+@everywhere begin
+
+using DrWatson
+@quickactivate "FilonExperiments"
+using FilonResearch, QuantumGateDesign, Printf
+using LinearAlgebra: norm, diag
+include(srcdir("error_analysis.jl"))
+include(srcdir("cnot3_hoho_helpers.jl"))
+include(srcdir("QuantumGateDesign_interface.jl"))
+
+const outdir = datadir("cnot3_convergence")
+fmt(x) = @sprintf("%3.2e", x)
 
 function make_initial_condition(spec, n::Integer)
     if spec == "uniform" # Uniform superposition
@@ -74,10 +81,10 @@ function make_initial_condition(spec, n::Integer)
     throw(ArgumentError("unknown initial condition spec: $spec"))
 end
 
-# ==============================
-# The main simulation
-# Solve the ODE with a given config.
-# ==============================
+"""
+The main simulation
+Solve the ODE with a given config.
+"""
 function run_simulation(config)
     qgd_prob = cnot3_hoho_qgd_prob(
         N_osc_levels = config.nOscLevels,
@@ -95,7 +102,7 @@ function run_simulation(config)
 
     if config.method == :hermite
         saveEveryNsteps, remainder = divrem(config.nsteps, config.nsaves)
-        remainder == 0 || throw(ArgumentError("Number of saves ($nsaves) and number of timesteps ($(config.nsteps)) are incompatible (remainder = $remainder)."))
+        remainder == 0 || throw(ArgumentError("Number of saves ($(config.nsaves)) and number of timesteps ($(config.nsteps)) are incompatible (remainder = $remainder)."))
 
         prob = QuantumGateDesign.VectorSchrodingerProb(qgd_prob, 1)
         prob.u0 .= real(initial_condition)
@@ -118,11 +125,11 @@ function run_simulation(config)
         # Run once to get compilation out of the way
         dummy_nsteps = 1
         t_elapsed = @elapsed history = filon_solve(
-            A_deriv_funcs, initial_condition, filon_freqs, Tmax, dummy_nsteps, config.s,
+            A_deriv_funcs, initial_condition, filon_freqs, config.Tmax, dummy_nsteps, config.s,
         )
         # Run again, for real this time
         t_elapsed = @elapsed history = filon_solve(
-            A_deriv_funcs, initial_condition, filon_freqs, Tmax, config.nsteps, config.s,
+            A_deriv_funcs, initial_condition, filon_freqs, config.Tmax, config.nsteps, config.s,
         )
     else
         throw(ArgumentError("Invalid method '$(config.method)'. Method must be either 'hermite' or 'filon'."))
@@ -134,11 +141,6 @@ function run_simulation(config)
     return @strdict history t_elapsed t_saves
 end
 
-# TODO Add richardson extrapolation error
-# Don't necessarily need to use the 'previous' history, just the most recent
-# one with fewer errors. Don't log it in the results either, just use it for
-# display if it's there
-# TODO in a distributed context, I would like to collect all configs into one big vector, then use a pmap over those
 # =========================
 # Collect data
 # =========================
@@ -166,7 +168,7 @@ function process_config(config)
     )
     # If there is a previous solution which this is a refinement of,
     # then approximate the error using Richardson extrapolation.
-    prev_config = (config..., nsteps = div(config.nsteps, refinement_factor))
+    prev_config = (config..., nsteps = div(config.nsteps, config.refinementFactor))
     prev_savename = savename("cnot3", prev_config, sort=false)
     prev_file = prev_savename * ".jld2"
     prev_path = joinpath(outdir, prev_file)
@@ -188,14 +190,13 @@ function process_config(config)
         rich_final_err = missing
     end
 
-    # Compute log_{refinement_factor}(nsteps)
-    level = round(Int, log(config.nsteps) / log(refinement_factor))
+    nsteps_str = "$(config.refinementFactor)^$(round(Int, log(config.nsteps, config.refinementFactor)))"
     @printf(
-        "method=%-8s s=%-2d nsteps=%-8d level=%-3d final_err=%-12s l2_err=%-12s t_elapsed=%-10.4e\n",
+        "pid=%d method=%-8s s=%-2d nsteps=%6s final_err=%-12s l2_err=%-12s t_elapsed=%-10.4e\n",
+        myid(),
         config.method,
         config.s,
-        config.nsteps,
-        level,
+        nsteps_str,
         ismissing(rich_final_err) ? "missing" : fmt(rich_final_err),
         ismissing(rich_l2_err)   ? "missing" : fmt(rich_l2_err),
         data["t_elapsed"],
@@ -204,6 +205,13 @@ function process_config(config)
     return true
 end
 
+end # @everywhere
+
+# ============================================================
+# Set run the simulations
+# ============================================================
+
+# Collect simulation configs
 configs = []
 
 for (s, nsteps_vec) in filon_s_to_nsteps
@@ -218,6 +226,7 @@ for (s, nsteps_vec) in filon_s_to_nsteps
            nOscLevels,
            nGuardLevels,
            nsaves,
+           refinementFactor,
            nsteps,
         )
         push!(configs, config)
@@ -236,19 +245,34 @@ for (s, nsteps_vec) in hermite_s_to_nsteps
            nOscLevels,
            nGuardLevels,
            nsaves,
+           refinementFactor,
            nsteps,
         )
         push!(configs, config)
     end
 end
 
-# TODO if-else branch to distribute this depending on whether we are using distributed or not.
-for config in configs
-    process_config(config)
+
+run_successes = pmap(configs) do config
+    try
+        process_config(config)
+    catch ex
+        @warn "Simulation failed" config exception=(ex, catch_backtrace())
+        false
+    end
 end
+
+if !all(run_successes)
+    println("\n")
+    @warn "Not all runs were successful!"
+    idx = findall(!, run_successes)
+    println("Unsuccessful runs:")
+    for i in idx
+        println("\t", configs[i])
+    end
+end
+
 
 # Run a second time. Since all the simulations have already been run, this just prints a summary of the results.
 println("\n"^3, "-"^80, "\n"^3, "Finished running simulations. Printing summary table.\n")
-for config in configs
-    process_config(config)
-end
+map(process_config, configs, on_error=ex -> println("Simulation errored")
