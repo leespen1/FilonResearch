@@ -27,10 +27,4 @@ echo "Memory per CPU                = $SLURM_MEM_PER_CPU"
 echo ""
 
 julia --project -e 'import Pkg; Pkg.instantiate(); Pkg.precompile()'
-julia --project cnot3_collect_convergence_data.jl
-
-## Something like below might be ideal, if I can get the other nodes to see the
-## packages on the main node. In that case, this would only instantiate once,
-## and there would be no conflicts.
-#$DATA/julia-1.5.3-linux-x86_64/bin/julia --project -e 'import Pkg; Pkg.instantiate();
-#include("myscript.jl")'
+julia --project cnot3_convergence_collect_data.jl
