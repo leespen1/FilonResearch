@@ -37,9 +37,6 @@ initialCondition = "uniform" # uniform, or eN, where N is an integer
 # ============================================================
 # Set up distributed environment
 # ============================================================
-using DrWatson # This only sets up environment on master process
-@quickactivate "FilonExperiments"
-
 using Distributed, SlurmClusterManager
 
 if haskey(ENV, "SLURM_JOBID") || haskey(ENV, "SLURM_JOB_ID")
@@ -50,20 +47,22 @@ end
 # ============================================================
 # Set up functions for running simulations
 # ============================================================
-@everywhere begin
 
-using DrWatson
-@quickactivate "FilonExperiments"
-using FilonResearch, QuantumGateDesign, Printf
-using LinearAlgebra: norm, diag
-include(srcdir("error_analysis.jl"))
-include(srcdir("cnot3_hoho_helpers.jl"))
-include(srcdir("QuantumGateDesign_interface.jl"))
+@everywhere using DrWatson
+@everywhere @quickactivate "FilonExperiments"
+@everywhere using FilonResearch
+@everywhere using QuantumGateDesign
+@everywhere using Printf
+@everywhere using LinearAlgebra: norm, diag
+@everywhere include(srcdir("error_analysis.jl"))
+@everywhere include(srcdir("cnot3_hoho_helpers.jl"))
+@everywhere include(srcdir("QuantumGateDesign_interface.jl"))
 
-const outdir = datadir("cnot3_convergence")
-fmt(x) = @sprintf("%3.2e", x)
+@everywhere const outdir = datadir("cnot3_convergence")
+@everywhere fmt(x) = @sprintf("%3.2e", x)
 
-function make_initial_condition(spec, n::Integer)
+# Given a 'spec' and the system size, construct the initial condition as a vector
+@everywhere function make_initial_condition(spec, n::Integer)
     if spec == "uniform" # Uniform superposition
         u0 = ones(ComplexF64, n)
         return u0 ./ norm(u0)
@@ -81,11 +80,9 @@ function make_initial_condition(spec, n::Integer)
     throw(ArgumentError("unknown initial condition spec: $spec"))
 end
 
-"""
-The main simulation
-Solve the ODE with a given config.
-"""
-function run_simulation(config)
+#The main simulation
+#Solve the ODE with a given config.
+@everywhere function run_simulation(config)
     qgd_prob = cnot3_hoho_qgd_prob(
         N_osc_levels = config.nOscLevels,
         N_guard_levels = config.nGuardLevels,
@@ -145,11 +142,9 @@ end
 # Collect data
 # =========================
 
-"""
-Run the simulation defined by config. Return true if the simulation completes
-sucessfully. Return false otherwise.
-"""
-function process_config(config)
+#Run the simulation defined by config. Return true if the simulation completes
+#sucessfully. Return false otherwise.
+@everywhere function process_config(config)
     # input validation
     if config.nsteps < config.nsaves
         @warn "Number of timesteps is less than number of saves" config.nsteps config.nsaves maxlog=3
@@ -205,10 +200,12 @@ function process_config(config)
     return true
 end
 
-end # @everywhere
+@everywhere println("[", myid(), "]", " Finished setting up helper functions.")
+@everywhere flush(stdout)
+
 
 # ============================================================
-# Set run the simulations
+# Run the simulations
 # ============================================================
 
 # Collect simulation configs
@@ -270,9 +267,11 @@ if !all(run_successes)
     for i in idx
         println("\t", configs[i])
     end
+    flush(stdout)
 end
 
 
 # Run a second time. Since all the simulations have already been run, this just prints a summary of the results.
 println("\n"^3, "-"^80, "\n"^3, "Finished running simulations. Printing summary table.\n")
 map(process_config, configs, on_error=ex -> println("Simulation errored")
+flush(stdout)
