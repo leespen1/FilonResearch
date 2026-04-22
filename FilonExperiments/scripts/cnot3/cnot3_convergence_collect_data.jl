@@ -1,9 +1,10 @@
+"""
+cnot3_collect_data.jl
 
-# cnot3_collect_data.jl
-#
-# Collect convergence data for Filon and Hermite methods on CNOT3 gate problem.
-# Each (method, s, nsteps) solve is cached individually via DrWatson's
-# produce_or_load, so re-running only computes missing results.
+Collect convergence data for Filon and Hermite methods on CNOT3 gate problem.
+Each (method, s, nsteps) solve is cached individually via DrWatson's
+produce_or_load, so re-running only computes missing results.
+"""
 
 
 # ============================================================
@@ -58,8 +59,8 @@ end
 @everywhere include(srcdir("cnot3_hoho_helpers.jl"))
 @everywhere include(srcdir("QuantumGateDesign_interface.jl"))
 
-@everywhere const outdir = datadir("cnot3_convergence")
-@everywhere fmt(x) = @sprintf("%3.2e", x)
+@everywhere const prefix = "cnot3Convergence"
+@everywhere const outdir = datadir(prefix)
 
 # Given a 'spec' and the system size, construct the initial condition as a vector
 @everywhere function make_initial_condition(spec, n::Integer)
@@ -138,71 +139,8 @@ end
     return @strdict history t_elapsed t_saves
 end
 
-# =========================
-# Collect data
-# =========================
-
-#Run the simulation defined by config. Return true if the simulation completes
-#sucessfully. Return false otherwise.
-@everywhere function process_config(config)
-    # input validation
-    if config.nsteps < config.nsaves
-        @warn "Number of timesteps is less than number of saves" config.nsteps config.nsaves maxlog=3
-        return false
-    end
-    if rem(config.nsteps, config.nsaves) != 0
-        @warn "Number of saves does not divide the number of timesteps" config.nsteps config.nsaves maxlog=3
-        return false
-    end
-
-    data, file = produce_or_load(
-        run_simulation,
-        config,
-        outdir,
-        filename = c -> savename("cnot3", c, sort=false),
-    )
-    # If there is a previous solution which this is a refinement of,
-    # then approximate the error using Richardson extrapolation.
-    prev_config = (config..., nsteps = div(config.nsteps, config.refinementFactor))
-    prev_savename = savename("cnot3", prev_config, sort=false)
-    prev_file = prev_savename * ".jld2"
-    prev_path = joinpath(outdir, prev_file)
-    if isfile(prev_path)
-        prev_data = load(prev_path)
-        order = 2*(config.s+1)
-
-        rich_l2_err = richardson_l2_integral_error(
-            data["history"], prev_data["history"], 
-            config.nsteps, prev_config.nsteps, config.Tmax, order,
-        )
-    
-        rich_final_err = richardson_error(
-            data["history"][:,end], prev_data["history"][:,end], 
-            config.nsteps, prev_config.nsteps, order,
-        )
-    else
-        rich_l2_err = missing
-        rich_final_err = missing
-    end
-
-    nsteps_str = "$(config.refinementFactor)^$(round(Int, log(config.nsteps, config.refinementFactor)))"
-    @printf(
-        "pid=%d method=%-8s s=%-2d nsteps=%6s final_err=%-12s l2_err=%-12s t_elapsed=%-10.4e\n",
-        myid(),
-        config.method,
-        config.s,
-        nsteps_str,
-        ismissing(rich_final_err) ? "missing" : fmt(rich_final_err),
-        ismissing(rich_l2_err)   ? "missing" : fmt(rich_l2_err),
-        data["t_elapsed"],
-    )
-
-    return true
-end
-
 @everywhere println("[", myid(), "]", " Finished setting up helper functions.")
 @everywhere flush(stdout)
-
 
 # ============================================================
 # Run the simulations
@@ -252,7 +190,7 @@ end
 
 run_successes = pmap(configs) do config
     try
-        process_config(config)
+        process_convergence_config(config)
     catch ex
         @warn "Simulation failed" config exception=(ex, catch_backtrace())
         false
@@ -273,5 +211,12 @@ end
 
 # Run a second time. Since all the simulations have already been run, this just prints a summary of the results.
 println("\n"^3, "-"^80, "\n"^3, "Finished running simulations. Printing summary table.\n")
-map(process_config, configs, on_error=ex -> println("Simulation errored")
+map(configs) do config
+    try
+        process_convergence_config(run_simulation, config, prefix, outdir)
+    catch ex
+        @warn "Simulation failed" config exception=(ex, catch_backtrace())
+        false
+    end
+end
 flush(stdout)

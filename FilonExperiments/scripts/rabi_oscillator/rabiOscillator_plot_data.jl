@@ -1,208 +1,14 @@
-"""
-Numerical experiments on the Rabi oscillation problem.
+using DrWatson
+@quickactivate "FilonExperiments"
 
-Two-level system driven by a periodic field:
-    du/dt = A(t) u
-
-Lab frame (exact):
-    A_lab(t) = -i [(ω₀/2)σz + Ω cos(ωt) σx]
-             = -i [ω₀/2        Ω cos(ωt)]
-                  [Ω cos(ωt)      -ω₀/2 ]
-
-Rotating frame (RWA):
-    A_rot = -i [(Δ/2)σz + (Ω/2)σx]
-          = -i [Δ/2    Ω/2]
-               [Ω/2   -Δ/2]
-    where Δ = ω₀ - ω is the detuning.
-
-Experiments:
-1. Numerical error in lab frame (compare to true lab frame solution)
-2. Numerical error in rotating frame (compare to exact RWA solution)
-3. Rotating frame solutions vs lab frame truth (shows RWA error floor)
-4. Norm preservation of state vector over time
-"""
-
-using FilonResearch
-using LinearAlgebra
 using CairoMakie
 using LaTeXStrings
 using Printf
 
 CairoMakie.set_theme!(CairoMakie.theme_latexfonts())
-
-# =============================================================================
-# Problem setup
-# =============================================================================
-
-"""
-Lab frame Hamiltonian matrix A(t) = -iH(t)/ℏ for the driven two-level system.
-"""
-function A_lab(t, ω₀, Ω, ω)
-    return -im * [ω₀/2       Ω*cos(ω*t);
-                  Ω*cos(ω*t)    -ω₀/2]
-end
-
-"""
-Time derivative of lab frame A matrix.
-"""
-function dA_lab(t, ω₀, Ω, ω)
-    return -im * [0             -Ω*ω*sin(ω*t);
-                  -Ω*ω*sin(ω*t)            0]
-end
-
-"""
-Second time derivative of lab frame A matrix.
-"""
-function d2A_lab(t, ω₀, Ω, ω)
-    return -im * [0               -Ω*ω^2*cos(ω*t);
-                  -Ω*ω^2*cos(ω*t)              0]
-end
-
-"""
-Third time derivative of lab frame A matrix.
-"""
-function d3A_lab(t, ω₀, Ω, ω)
-    return -im * [0               Ω*ω^3*sin(ω*t);
-                  Ω*ω^3*sin(ω*t)              0]
-end
-
-"""
-Rotating frame (RWA) Hamiltonian matrix - time independent.
-"""
-function A_rot(Δ, Ω)
-    return -im * [Δ/2   Ω/2;
-                  Ω/2  -Δ/2]
-end
-
-"""
-Exact solution in the rotating frame (RWA).
-Ω_eff = √(Δ² + Ω²) is the generalized Rabi frequency.
-"""
-function exact_rotating_frame(u0, Δ, Ω, t)
-    A = A_rot(Δ, Ω)
-    return exp(A * t) * u0
-end
-
-"""
-Transform state from rotating frame to lab frame.
-U(t) = diag(e^{-iωt/2}, e^{iωt/2})
-ψ_lab(t) = U(t) ψ_rot(t)
-"""
-function rotating_to_lab(u_rot, ω, t)
-    U = [cis(-ω*t/2)  0;
-         0            cis(ω*t/2)]
-    return U * u_rot
-end
-
-"""
-Transform state from lab frame to rotating frame.
-U†(t) = diag(e^{iωt/2}, e^{-iωt/2})
-ψ_rot(t) = U†(t) ψ_lab(t)
-"""
-function lab_to_rotating(u_lab, ω, t)
-    U_dag = [cis(ω*t/2)   0;
-             0            cis(-ω*t/2)]
-    return U_dag * u_lab
-end
-
-"""
-Compute a Filon-based lab frame reference solution at nsteps+1 evenly spaced points.
-Uses filon_solve with exponential integration (ansatz frequencies) and s=s_ref for high accuracy.
-"""
-function lab_reference_filon(A_deriv_funcs, u0, frequencies, tf, nsteps, s_ref)
-    return filon_solve(A_deriv_funcs, u0, frequencies, tf, nsteps, s_ref)
-end
-
-"""
-Compute a saturated Filon-based reference solution by doubling nsteps until convergence.
-Returns (nsteps_ref, sol_ref) where sol_ref is a (d × nsteps_ref+1) matrix.
-"""
-function saturated_lab_reference(A_deriv_funcs, u0, frequencies, tf, s_ref;
-                                  nsteps_start=2^14, nsteps_max=2^20, tol=1e-10)
-    nsteps_prev = nsteps_start
-    sol_prev = lab_reference_filon(A_deriv_funcs, u0, frequencies, tf, nsteps_prev, s_ref)
-
-    nsteps_curr = 2 * nsteps_prev
-    while nsteps_curr <= nsteps_max
-        sol_curr = lab_reference_filon(A_deriv_funcs, u0, frequencies, tf, nsteps_curr, s_ref)
-        # Compare endpoints
-        diff = norm(sol_curr[:, end] - sol_prev[:, end])
-        println("  nsteps=$nsteps_curr: endpoint diff = $diff")
-        if diff < tol
-            println("  Saturated at nsteps=$nsteps_curr")
-            return nsteps_curr, sol_curr
-        end
-        nsteps_prev = nsteps_curr
-        sol_prev = sol_curr
-        nsteps_curr *= 2
-    end
-
-    println("  Warning: did not saturate by nsteps=$nsteps_prev, using that as reference")
-    return nsteps_prev, sol_prev
-end
-
-"""
-Subsample the reference solution matrix to match a coarser grid with nsteps_test steps.
-Returns a length-(nsteps_test+1) vector of d-vectors.
-"""
-function subsample_reference(sol_ref, nsteps_ref, nsteps_test)
-    ratio = nsteps_ref ÷ nsteps_test
-    return [sol_ref[:, 1 + (k-1)*ratio] for k in 1:nsteps_test+1]
-end
-
-"""
-Compute the discrete L2 norm of the error over [0, tf].
-`sols` is a (d × N) matrix (filon_solve output), `refs` is a length-N vector of d-vectors.
-Uses ||e||_h = √(h ∑ᵢ ||eᵢ||²) where h = Δt is the grid spacing.
-"""
-function l2_error(times, sols, refs)
-    return sqrt(sum(sum(abs2, sols[:, i] - refs[i]) for i in 1:length(times)) / length(times))
-end
-
-
-# =============================================================================
-# Main experiment parameters
-# =============================================================================
-
-ω₀ = 100.0           # Atomic transition frequency
-ω = 100.0            # Drive frequency (on resonance: ω = ω₀)
-Δ = ω₀ - ω          # Detuning
-Ω = 0.1            # Rabi frequency (coupling strength)
-
-# Initial state: excited state
-u0 = ComplexF64[0.0, 1.0]
-
-# Ansatz frequencies for Filon method (energy eigenvalues of free Hamiltonian)
-frequencies_lab = -1 .* [ω₀/2, -ω₀/2]
-frequencies_rot = [0.0, 0.0]  # In rotating frame, effectively removed fast oscillation
-
-# Time parameters
-T_lab = 2pi / (ω₀/2)
-Ω_eff = sqrt(Δ^2 + Ω^2)         # Generalized Rabi frequency
-T_rabi = 2π / Ω_eff             # Rabi period
-
-n_periods = 25.5                 # Number of Rabi periods
-tf = n_periods * T_lab          # Final time
-
-
-s_values = 0:3
-use_l2_error = false # false for final-time error only
-
 colors = Makie.wong_colors()
 
-println("=" ^ 70)
-println("Rabi Oscillation Experiments")
-println("=" ^ 70)
-println("ω₀ = $ω₀ (atomic frequency)")
-println("ω = $ω (drive frequency)")
-println("Δ = $Δ (detuning)")
-println("Ω = $Ω (Rabi frequency)")
-println("Ω_eff = $Ω_eff (generalized Rabi frequency)")
-println("T_rabi = $T_rabi (Rabi period)")
-println("T_lab = $T_rabi (Lab period [approx])")
-println("tf = $tf ($n_periods Lab periods)")
-println()
-
+#=
 # =============================================================================
 # Reference solutions
 # =============================================================================
@@ -211,15 +17,9 @@ println("-" ^ 70)
 println("Computing reference solutions...")
 println("-" ^ 70)
 
-A_lab_func = t -> A_lab(t, ω₀, Ω, ω)
-dA_lab_func = t -> dA_lab(t, ω₀, Ω, ω)
-d2A_lab_func = t -> d2A_lab(t, ω₀, Ω, ω)
-d3A_lab_func = t -> d3A_lab(t, ω₀, Ω, ω)
-A_deriv_funcs_all = (A_lab_func, dA_lab_func, d2A_lab_func, d3A_lab_func)
 A_rot_mat = A_rot(Δ, Ω)
 
 frequencies_zero = [0.0, 0.0]
-s_ref = 3
 
 # Rotating frame exact solution (analytical)
 u_final_rot = exact_rotating_frame(u0, Δ, Ω, tf)
@@ -636,3 +436,4 @@ println("Saved figure to Plots/rabi_solutions.{png,svg,pdf}")
 
 display(fig2)
 display(fig)
+=#

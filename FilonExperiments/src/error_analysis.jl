@@ -1,3 +1,5 @@
+using DrWatson
+
 """
 Compute the stride needed to index hist_fine at the same timepoints as
 hist_coarse (assuming the columns of both histories represent values at equally
@@ -137,4 +139,75 @@ function downsample_history(history::AbstractMatrix{<: Number}, nsteps::Integer)
     stride = stride_from_compatible_histories(history, history_downsampled) 
     history_downsampled .= history[:,1:stride:end]
     return history_downsampled
+end
+
+"""
+Run the convergence simulation defined by config and run_simulation_f. Return
+true if the simulation completes sucessfully. Return false otherwise.
+
+It is assumed that config has fields 'nsaves', 'nsteps', and refinementFactor',
+and that the output of run_simulation_f has key 'history'.
+
+Rather than just running run_simulation_f directly, this has the advantage of
+looking for files corresponding to previous runs of the same simulation with a
+different number of timesteps, and using that to do a richardson extrapolation
+error estimate and print the results, which is helpful for seeing intermediate
+progress, or getting an idea for what the plots will look like before actually
+plotting.
+"""
+function process_convergence_config(run_simulation_f, config, prefix, outdir)
+    fmt(x) = @sprintf("%3.2e", x)
+    # input validation
+    if config.nsteps < config.nsaves
+        @warn "Number of timesteps is less than number of saves" config.nsteps config.nsaves maxlog=3
+        return false
+    end
+    if rem(config.nsteps, config.nsaves) != 0
+        @warn "Number of saves does not divide the number of timesteps" config.nsteps config.nsaves maxlog=3
+        return false
+    end
+
+    data, file = produce_or_load(
+        run_simulation_f,
+        config,
+        outdir,
+        filename = c -> savename(prefix, c, sort=false),
+    )
+    # If there is a previous solution which this is a refinement of,
+    # then approximate the error using Richardson extrapolation.
+    prev_config = (config..., nsteps = div(config.nsteps, config.refinementFactor))
+    prev_savename = savename(prefix, prev_config, sort=false)
+    prev_file = prev_savename * ".jld2"
+    prev_path = joinpath(outdir, prev_file)
+    if isfile(prev_path)
+        prev_data = load(prev_path)
+        order = 2*(config.s+1)
+
+        rich_l2_err = richardson_l2_integral_error(
+            data["history"], prev_data["history"], 
+            config.nsteps, prev_config.nsteps, config.Tmax, order,
+        )
+    
+        rich_final_err = richardson_error(
+            data["history"][:,end], prev_data["history"][:,end], 
+            config.nsteps, prev_config.nsteps, order,
+        )
+    else
+        rich_l2_err = missing
+        rich_final_err = missing
+    end
+
+    nsteps_str = "$(config.refinementFactor)^$(round(Int, log(config.refinementFactor, config.nsteps)))"
+    @printf(
+        "pid=%d method=%-8s s=%-2d nsteps=%-6s final_err=%-12s l2_err=%-12s t_elapsed=%-10.4e\n",
+        myid(),
+        config.method,
+        config.s,
+        nsteps_str,
+        ismissing(rich_final_err) ? "missing" : fmt(rich_final_err),
+        ismissing(rich_l2_err)   ? "missing" : fmt(rich_l2_err),
+        data["t_elapsed"],
+    )
+
+    return true
 end
