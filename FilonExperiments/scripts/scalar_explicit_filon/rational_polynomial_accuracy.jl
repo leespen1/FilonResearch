@@ -1,11 +1,10 @@
-using FilonResearch
+using DrWatson
+@quickactivate "FilonExperiments"
+using FilonResearch, Polynomials, CairoMakie, LaTeXStrings
 using SpecialFunctions: expint
-using Polynomials
-#using GLMakie
-using CairoMakie
 CairoMakie.set_theme!(CairoMakie.theme_latexfonts())
 
-using LaTeXStrings
+
 """
 Plot accuracy of the explicit Filon method when evaluating the integral
 
