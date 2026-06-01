@@ -10,6 +10,7 @@ OrdinaryDiffEqVerner = "79d7bb75-1356-48c1-b8c0-6832512096c2"
 Polynomials = "f27b6e38-b328-58d1-80ce-0feddd5e7a45"
 QuantumGateDesign = "f716b271-9d99-4329-8adc-fa1e42d5b881"
 SlurmClusterManager = "c82cd089-7bf7-41d7-976b-6b5d413cbe0a"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [sources]
 FilonResearch = {path = ".."}
