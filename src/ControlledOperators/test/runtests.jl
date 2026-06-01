@@ -35,8 +35,8 @@ end
 mul3!(y, op, x) = (mul!(y, op, x); nothing)
 mul5!(y, op, x, α, β) = (mul!(y, op, x, α, β); nothing)
 apply(op, x) = op * x
-do_evaluate(gen, t) = evaluate(gen, t)
-do_evaluate!(op, gen, t) = (evaluate!(op, gen, t); nothing)
+do_evaluate(co, t) = evaluate(co, t)
+do_evaluate!(op, co, t) = (evaluate!(op, co, t); nothing)
 
 # Central finite differences for orders 1..3 (independent check of analytic derivatives).
 function fd_deriv(f, t, ::Val{1}; h = 1e-3)

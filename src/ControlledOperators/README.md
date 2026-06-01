@@ -8,11 +8,11 @@ A(t) = Σₖ cₖ(t) · Aₖ
 
 for quantum optimal control. It mirrors the vocabulary of
 [QuantumPropagators.jl](https://github.com/JuliaQuantumControl/QuantumPropagators.jl) —
-a symbolic **`Generator`** vs. a realized **`Operator`**, connected by **`evaluate`** /
+a symbolic **`ControlledOperator`** vs. a realized **`Operator`**, connected by **`evaluate`** /
 **`evaluate!`** — but is an independent implementation with **no runtime dependency** on it.
 
 The design goal is a clean, **type-stable, allocation-free** realization layer: build a
-`Generator` once from scalar controls `cₖ(t)` and constant matrices `Aₖ`, then `evaluate` it
+`ControlledOperator` once from scalar controls `cₖ(t)` and constant matrices `Aₖ`, then `evaluate` it
 at a time `t` into an `Operator` that **shares** (never copies) the matrices and applies via
 non-allocating `mul!` inside an iterative solver, or `materialize`s for a direct solve.
 
@@ -38,9 +38,9 @@ H₁ = [0.0 1.0; 1.0 0.0]
 drift = ConstantControl(1.0)
 ε     = FourierControl(0.0, [0.0], [1.0], 2.0)     # a0=0, cos-coeffs=[0], sin-coeffs=[1], ω=2
 
-gen = Generator((drift, ε), [H₀, H₁])              # symbolic A(t) = H₀ + ε(t)·H₁
+co = ControlledOperator((drift, ε), [H₀, H₁])              # symbolic A(t) = H₀ + ε(t)·H₁
 
-op  = evaluate(gen, 0.5)                            # realize at t = 0.5  (shares H₀, H₁)
+op  = evaluate(co, 0.5)                            # realize at t = 0.5  (shares H₀, H₁)
 
 x = [1.0, 2.0]
 y = similar(x)
@@ -61,9 +61,9 @@ sol, stats = Krylov.cg(op, y)                       # op used directly as the li
 At a fixed time, refresh only the coefficients (zero allocation), reusing the same operator:
 
 ```julia
-op = Operator(gen, 0.0)            # reusable, mutable coefficient buffer
+op = Operator(co, 0.0)            # reusable, mutable coefficient buffer
 for t in times
-    evaluate!(op, gen, t)          # in-place; matrices untouched
+    evaluate!(op, co, t)          # in-place; matrices untouched
     # … use mul!(y, op, x) …
 end
 ```
@@ -73,8 +73,8 @@ end
 `Aᴺ(t)` is structurally identical — same matrices, the `N`-th derivative of each control:
 
 ```julia
-dA = evaluate(gen, 0.5, Derivative{1}())            # realized Ȧ(0.5)
-dA.matrices === gen.matrices                         # true — matrices are shared, never copied
+dA = evaluate(co, 0.5, Derivative{1}())            # realized Ȧ(0.5)
+dA.matrices === co.matrices                         # true — matrices are shared, never copied
 ```
 
 ## Static (fully unrolled, isbits) layout
@@ -85,8 +85,8 @@ fully unrolled and allocate nothing:
 ```julia
 using StaticArrays
 S₀ = SMatrix{2,2}(H₀); S₁ = SMatrix{2,2}(H₁)
-sgen = Generator((drift, ε), (S₀, S₁))
-sop  = evaluate(sgen, 0.5)
+co_static = ControlledOperator((drift, ε), (S₀, S₁))
+sop  = evaluate(co_static, 0.5)
 sop * SVector(1.0, 2.0)                              # returns an SVector, no heap allocation
 ```
 

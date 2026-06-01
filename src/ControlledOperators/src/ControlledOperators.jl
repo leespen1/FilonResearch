@@ -6,7 +6,7 @@ A small, self-contained implementation of time-dependent operators
     A(t) = Σₖ cₖ(t) · Aₖ
 
 for quantum optimal control.  It mirrors the vocabulary of QuantumPropagators.jl —
-[`Generator`](@ref) (symbolic) vs [`Operator`](@ref) (realized), connected by
+[`ControlledOperator`](@ref) (symbolic) vs [`Operator`](@ref) (realized), connected by
 [`evaluate`](@ref) / [`evaluate!`](@ref) — but is an independent implementation with no
 runtime dependency on it.
 
@@ -14,9 +14,9 @@ The design goal is a clean, type-stable, allocation-free realization layer:
 
 * scalar [`AbstractControl`](@ref)s `cₖ(t)` with analytic [`derivative`](@ref)s selected by
   the compile-time singletons [`Derivative{N}`](@ref) / [`DerivativeUpTo{N}`](@ref);
-* a [`Generator`](@ref) storing controls and matrices as two parallel containers
+* a [`ControlledOperator`](@ref) storing controls and matrices as two parallel containers
   (struct-of-arrays), in either a *static* (tuple/`SMatrix`) or *dynamic* (`Vector`) layout;
-* an [`Operator`](@ref) that realizes the coefficients while **sharing** the generator's
+* an [`Operator`](@ref) that realizes the coefficients while **sharing** the controlled operator's
   matrices, with non-allocating `mul!`/`*`, `materialize`, and a full `AbstractMatrix`
   interface so it drops straight into Krylov.jl or a direct solve.
 
@@ -42,12 +42,12 @@ using StaticArrays
 
 export AbstractControl, ConstantControl, FourierControl, FunctionControl, ScaledControl
 export Derivative, DerivativeUpTo, derivative, erase_type
-export Generator, Operator, get_controls, evaluate, evaluate!
+export ControlledOperator, Operator, get_controls, evaluate, evaluate!
 export materialize, materialize!
 
 include("derivatives.jl")
 include("controls.jl")
-include("generator.jl")
+include("controlled_operator.jl")
 include("operator.jl")
 
 end # module

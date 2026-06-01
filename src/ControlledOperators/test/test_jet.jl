@@ -11,27 +11,27 @@
     H2 = [0.5 0.0; 0.0 0.5]
 
     # dynamic
-    gen = Generator((c0, f1, f2), [H0, H1, H2])
-    op = evaluate(gen, 0.3)
-    rop = Operator(gen, 0.0)
+    co = ControlledOperator((c0, f1, f2), [H0, H1, H2])
+    op = evaluate(co, 0.3)
+    rop = Operator(co, 0.0)
     x = [1.0, -2.0]
     y = similar(x)
 
-    JET.@test_opt target_modules = (ControlledOperators,) evaluate(gen, 0.3)
+    JET.@test_opt target_modules = (ControlledOperators,) evaluate(co, 0.3)
     JET.@test_opt target_modules = (ControlledOperators,) mul!(y, op, x)
     JET.@test_opt target_modules = (ControlledOperators,) mul!(y, op, x, 2.0, 3.0)
-    JET.@test_opt target_modules = (ControlledOperators,) evaluate!(rop, gen, 0.3)
+    JET.@test_opt target_modules = (ControlledOperators,) evaluate!(rop, co, 0.3)
 
     # static
-    sgen = Generator((c0, f1, f2), (SMatrix{2,2}(H0), SMatrix{2,2}(H1), SMatrix{2,2}(H2)))
-    sop = evaluate(sgen, 0.3)
+    co_static = ControlledOperator((c0, f1, f2), (SMatrix{2,2}(H0), SMatrix{2,2}(H1), SMatrix{2,2}(H2)))
+    sop = evaluate(co_static, 0.3)
     xs = SVector(1.0, -2.0)
     ys = MVector(0.0, 0.0)
 
-    JET.@test_opt target_modules = (ControlledOperators,) evaluate(sgen, 0.3)
+    JET.@test_opt target_modules = (ControlledOperators,) evaluate(co_static, 0.3)
     JET.@test_opt target_modules = (ControlledOperators,) sop * xs
     JET.@test_opt target_modules = (ControlledOperators,) mul!(ys, sop, xs, 2.0, 3.0)
 
     # derivative-controls realize the same way
-    JET.@test_opt target_modules = (ControlledOperators,) evaluate(gen, 0.3, Derivative{2}())
+    JET.@test_opt target_modules = (ControlledOperators,) evaluate(co, 0.3, Derivative{2}())
 end

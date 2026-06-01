@@ -7,9 +7,9 @@
     S1 = SMatrix{2,2}(0.0, 1.0, 1.0, 0.0)
     S2 = SMatrix{2,2}(0.5, 0.0, 0.0, 0.5)
 
-    gen = Generator((c0, f1, f2), (S0, S1, S2))
+    co = ControlledOperator((c0, f1, f2), (S0, S1, S2))
     t = 0.37
-    op = evaluate(gen, t)
+    op = evaluate(co, t)
     @test op.coeffs isa SVector{3,Float64}
     @test op.matrices isa Tuple
 
@@ -30,8 +30,8 @@
     @test count_allocs(mul3!, ys, op, xs) == 0
 
     # Fully-static evaluate allocates nothing (the Operator is isbits).
-    @test @inferred(evaluate(gen, t)) isa Operator
-    @test count_allocs(do_evaluate, gen, t) == 0
+    @test @inferred(evaluate(co, t)) isa Operator
+    @test count_allocs(do_evaluate, co, t) == 0
 
     # materialize returns an SMatrix on the static path.
     @test @inferred(materialize(op)) isa SMatrix{2,2,Float64}

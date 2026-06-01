@@ -5,7 +5,7 @@
 """
     Operator{T,CT,MC} <: AbstractMatrix{T}
 
-A *realized* time-dependent operator: the value of a [`Generator`](@ref) frozen at one time,
+A *realized* time-dependent operator: the value of a [`ControlledOperator`](@ref) frozen at one time,
 
     A = Σₖ coeffs[k] · matrices[k].
 
@@ -13,7 +13,7 @@ It stores
 
 * `coeffs::CT`   — the realized scalar coefficients (`SVector` for the static layout, `Vector`
   for the dynamic layout), and
-* `matrices::MC` — **the very same matrix container the generator holds** (never copied).
+* `matrices::MC` — **the very same matrix container the controlled operator holds** (never copied).
 
 `Operator <: AbstractMatrix{T}` with `T = promote_type(eltype(coeffs), eltype(matrix))`, so it
 implements `size`, `eltype`, `getindex`, `mul!` and `*` and drops straight into iterative
@@ -51,44 +51,44 @@ end
 end
 
 """
-    evaluate(gen, t, order = Derivative{0}()) -> Operator
+    evaluate(co, t, order = Derivative{0}()) -> Operator
 
-Realize the generator `gen` at time `t`, returning an [`Operator`](@ref) that shares `gen`'s
+Realize the controlled operator `co` at time `t`, returning an [`Operator`](@ref) that shares `co`'s
 matrices.  With `order = Derivative{N}()` the coefficients are each control's `N`-th
 derivative, giving the realized `N`-th time-derivative `Aᴺ(t)` — structurally identical, only
 the coefficients differ.
 
-For a fully static generator (tuple matrices) this allocates nothing.  For repeated
+For a fully static controlled operator (tuple matrices) this allocates nothing.  For repeated
 refreshing at a fixed `t` across solver iterations, build a reusable operator with
-[`Operator(gen, t)`](@ref) and call [`evaluate!`](@ref).
+[`Operator(co, t)`](@ref) and call [`evaluate!`](@ref).
 """
-@inline function evaluate(gen::Generator, t::Real, d::Derivative = Derivative{0}())
-    coeffs = _coeffs(gen.controls, t, d)
-    return Operator(coeffs, gen.matrices)
+@inline function evaluate(co::ControlledOperator, t::Real, d::Derivative = Derivative{0}())
+    coeffs = _coeffs(co.controls, t, d)
+    return Operator(coeffs, co.matrices)
 end
 
 """
-    Operator(gen::Generator, t, order = Derivative{0}()) -> Operator
+    Operator(co::ControlledOperator, t, order = Derivative{0}()) -> Operator
 
-Build a **reusable, mutable** operator from `gen` at time `t`, forcing a `Vector` coefficient
+Build a **reusable, mutable** operator from `co` at time `t`, forcing a `Vector` coefficient
 buffer (one allocation up front).  Subsequent [`evaluate!`](@ref) calls refresh that buffer in
-place with zero allocation, even when `gen`'s controls are a heterogeneous tuple.
+place with zero allocation, even when `co`'s controls are a heterogeneous tuple.
 """
-function Operator(gen::Generator, t::Real, d::Derivative = Derivative{0}())
-    coeffs = collect(_coeffs(gen.controls, t, d))
-    return Operator(coeffs, gen.matrices)
+function Operator(co::ControlledOperator, t::Real, d::Derivative = Derivative{0}())
+    coeffs = collect(_coeffs(co.controls, t, d))
+    return Operator(coeffs, co.matrices)
 end
 
 """
-    evaluate!(op, gen, t, order = Derivative{0}()) -> op
+    evaluate!(op, co, t, order = Derivative{0}()) -> op
 
-Refresh `op`'s coefficients in place from `gen` at time `t` (the matrices are untouched).
-`op` must have a mutable coefficient buffer — build it with [`Operator(gen, t)`](@ref) or any
+Refresh `op`'s coefficients in place from `co` at time `t` (the matrices are untouched).
+`op` must have a mutable coefficient buffer — build it with [`Operator(co, t)`](@ref) or any
 `evaluate` that produced `Vector` coefficients.  Allocation-free, including for a heterogeneous
 tuple of controls (the write loop is unrolled).
 """
-@inline function evaluate!(op::Operator, gen::Generator, t::Real, d::Derivative = Derivative{0}())
-    _evaluate_coeffs!(op.coeffs, gen.controls, t, d)
+@inline function evaluate!(op::Operator, co::ControlledOperator, t::Real, d::Derivative = Derivative{0}())
+    _evaluate_coeffs!(op.coeffs, co.controls, t, d)
     return op
 end
 
@@ -144,8 +144,8 @@ end
 
 function _evaluate_coeffs!(::StaticVector, controls, t, d)
     return throw(ArgumentError(
-        "evaluate! needs a mutable coefficient buffer; build the operator with `Operator(gen, t)` " *
-        "or use `evaluate(gen, t)` (which is itself allocation-free for static generators)."))
+        "evaluate! needs a mutable coefficient buffer; build the operator with `Operator(co, t)` " *
+        "or use `evaluate(co, t)` (which is itself allocation-free for static controlled operators)."))
 end
 
 # ---------------------------------------------------------------------------------------------
@@ -260,7 +260,7 @@ Note the base case differs from [`_write_coeffs!`](@ref): it is `::Tuple{Any}`, 
 static type to start an empty sum from — so the recursion bottoms out at the *last* term and
 returns `c[k]·(mats[k]·x)` directly.  (`Tuple{Any}` is the type of any length-1 tuple `(a,)`;
 a longer tuple matches the general `::Tuple` method.)  This assumes the operator has ≥1 term,
-which `Generator`/`evaluate` guarantee for the static layout.
+which `ControlledOperator`/`evaluate` guarantee for the static layout.
 """
 @inline function _times_tuple(mats::Tuple{Any}, c, x, k)
     return c[k] * (first(mats) * x)

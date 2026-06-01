@@ -15,7 +15,7 @@ using ControlledOperators
 # Polynomials.derivative is unused in this package, so no longer imported above.
 export AbstractControl, ConstantControl, FourierControl, FunctionControl, ScaledControl
 export Derivative, DerivativeUpTo, derivative, erase_type
-export Generator, Operator, get_controls, evaluate, evaluate!
+export ControlledOperator, Operator, get_controls, evaluate, evaluate!
 export materialize, materialize!
 
 # Toggle for the Taylor series branch in filon_moments.

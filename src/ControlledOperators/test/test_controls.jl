@@ -66,14 +66,14 @@
 
     @testset "t is restricted to Real" begin
         f = FourierControl(0.3, [0.5], [0.2], 1.7)
-        gen = Generator((ConstantControl(1.0), f),
+        co = ControlledOperator((ConstantControl(1.0), f),
                         (SMatrix{2,2}(1.0, 0, 0, 1.0), SMatrix{2,2}(0.0, 1, 1, 0.0)))
         # Non-real time is rejected where there is no generic fallback: the call operator and
         # `evaluate`.  (With the TaylorDiff extension loaded, `derivative(c, t, order)` itself
         # has an untyped-`t` fallback, so it would instead route a non-real `t` to Taylor mode.)
         @test_throws MethodError f(1.0im)
         @test_throws MethodError f("noon")
-        @test_throws MethodError evaluate(gen, 1.0im)
+        @test_throws MethodError evaluate(co, 1.0im)
         # Real subtypes (Int, Rational, Float32) are accepted and agree with Float64.
         @test f(1) ≈ f(1.0)
         @test f(1 // 2) ≈ f(0.5)

@@ -65,7 +65,7 @@ function derivative end
     ConstantControl(value)
 
 A control that is constant in time: `c(t) = value`, with all higher derivatives zero.  Use
-`ConstantControl(1)` for the drift term `H₀` of a generator.
+`ConstantControl(1)` for the drift term `H₀` of a controlled operator.
 """
 struct ConstantControl{T} <: AbstractControl{T}
     value::T
@@ -190,7 +190,7 @@ end
     ScaledControl(s, control)
 
 A control whose every derivative is `s` times that of `control`: `(s·c)(t) = s · c(t)`.  Used
-internally to implement subtraction (`s = -1`) and scalar multiplication of generators and
+internally to implement subtraction (`s = -1`) and scalar multiplication of controlled operators and
 operators.
 """
 struct ScaledControl{T,C<:AbstractControl} <: AbstractControl{T}
