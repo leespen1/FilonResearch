@@ -3,6 +3,7 @@ authors = ["Spencer Lee"]
 
 [deps]
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+ControlledOperators = "e1fb17ce-2642-44fa-a2d5-f5681ff53a0f"
 DrWatson = "634d3b9d-ee7a-5ddf-bec9-22491ea816e1"
 FilonResearch = "3a284e70-3988-4fde-94af-e81b1d70ca0a"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
@@ -13,6 +14,7 @@ SlurmClusterManager = "c82cd089-7bf7-41d7-976b-6b5d413cbe0a"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [sources]
+ControlledOperators = {path = "../src/ControlledOperators"}
 FilonResearch = {path = ".."}
 QuantumGateDesign = {url = "https://github.com/leespen1/QuantumGateDesign.jl.git"}
 

@@ -1,0 +1,13 @@
+[deps]
+AllocCheck = "9b6a8646-10ed-4001-bbdc-1d2f46dfbb1a"
+BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+ControlledOperators = "e1fb17ce-2642-44fa-a2d5-f5681ff53a0f"
+FunctionWrappers = "069b7b12-0de2-55c6-9aab-29f3d0a68a2e"
+JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
+Krylov = "ba0b0d4f-ebba-5204-a429-3ac8c609bfb7"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+OffsetArrays = "6fe1bfb0-de20-5000-8ca7-80f57d26f881"
+SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+TaylorDiff = "b36ab563-344f-407b-a36a-4f200bebf99c"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"

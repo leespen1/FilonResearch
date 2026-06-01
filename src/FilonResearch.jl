@@ -1,11 +1,22 @@
 module FilonResearch
 
 import Polynomials
-import Polynomials: Polynomial, derivative
+import Polynomials: Polynomial
 import LinearAlgebra: dot, mul!, I, Diagonal, cond, eigvals
 import LinearMaps: LinearMap
 import IterativeSolvers: gmres
 import Krylov
+
+# Subpackage providing time-dependent controlled operators A(t) = Σₖ cₖ(t)·Aₖ.
+# Lives at src/ControlledOperators (wired in via [sources] in Project.toml).
+using ControlledOperators
+# Re-export the subpackage's public API so `using FilonResearch` exposes it.
+# `derivative` here is the control derivative from ControlledOperators;
+# Polynomials.derivative is unused in this package, so no longer imported above.
+export AbstractControl, ConstantControl, FourierControl, FunctionControl, ScaledControl
+export Derivative, DerivativeUpTo, derivative, erase_type
+export Generator, Operator, get_controls, evaluate, evaluate!
+export materialize, materialize!
 
 # Toggle for the Taylor series branch in filon_moments.
 # When true (default), small-ω moments use a Taylor series to avoid

@@ -1,0 +1,23 @@
+name = "ControlledOperators"
+uuid = "e1fb17ce-2642-44fa-a2d5-f5681ff53a0f"
+authors = ["Spencer Lee <spencerwilliamlee@gmail.com>"]
+version = "0.1.0"
+
+[deps]
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+
+[weakdeps]
+FunctionWrappers = "069b7b12-0de2-55c6-9aab-29f3d0a68a2e"
+TaylorDiff = "b36ab563-344f-407b-a36a-4f200bebf99c"
+
+[extensions]
+ControlledOperatorsFunctionWrappersExt = "FunctionWrappers"
+ControlledOperatorsTaylorDiffExt = "TaylorDiff"
+
+[compat]
+FunctionWrappers = "1"
+StaticArrays = "1"
+TaylorDiff = "0.3"
+julia = "1.10"
