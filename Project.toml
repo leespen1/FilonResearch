@@ -16,6 +16,7 @@ Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 QuantumGateDesign = "f716b271-9d99-4329-8adc-fa1e42d5b881"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [sources]
@@ -32,4 +33,5 @@ Polynomials = "4.1.0"
 QuantumGateDesign = "0.1.0"
 Random = "1.11.0"
 SpecialFunctions = "2.6.1"
+StaticArrays = "1"
 Test = "1.11.0"

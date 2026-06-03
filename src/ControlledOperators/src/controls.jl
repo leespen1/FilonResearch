@@ -215,3 +215,79 @@ end
 @inline function derivative(sc::ScaledControl, t::Real, d::DerivativeUpTo)
     return sc.factor .* derivative(sc.control, t, d)
 end
+
+# ---------------------------------------------------------------------------------------------
+# CarrierControl
+# ---------------------------------------------------------------------------------------------
+
+"""
+    CarrierControl(envelope, ωc)
+
+A control `c(t) = envelope(t) · e^{i ωc t}`: a slowly-varying `envelope` (any
+[`AbstractControl`](@ref)) modulated by a complex-exponential *carrier wave* of frequency `ωc`.
+Its value type is complex.  Time-derivatives follow the Leibniz rule
+
+    c⁽ᴺ⁾(t) = e^{i ωc t} Σ_{i=0}^N binom(N,i) · envelope⁽ⁱ⁾(t) · (i ωc)^{N-i}.
+
+Unlike folding the carrier into a generic control, a `CarrierControl` keeps the `envelope` and
+`ωc` *recoverable* (via [`envelope`](@ref) and [`carrier_frequency`](@ref)).  Methods that must
+treat the envelope and carrier separately — notably the controlled Filon method, which gives
+each control term its own oscillatory ansatz — rely on that.
+"""
+struct CarrierControl{T,Tω<:Real,E<:AbstractControl} <: AbstractControl{T}
+    envelope::E
+    ωc::Tω
+end
+
+function CarrierControl(env::AbstractControl, ωc::Real)
+    Te = eltype(env)
+    T = Complex{promote_type(real(Te), typeof(float(ωc)))}
+    return CarrierControl{T,typeof(ωc),typeof(env)}(env, ωc)
+end
+
+@inline function derivative(c::CarrierControl{T}, t::Real, ::Derivative{N}) where {T,N}
+    env = derivative(c.envelope, t, DerivativeUpTo{N}())   # SVector{N+1}: envelope⁽⁰⁾ … envelope⁽ᴺ⁾
+    iω = im * c.ωc
+    acc = zero(T)
+    @inbounds for i in 0:N
+        acc += binomial(N, i) * env[i+1] * iω^(N - i)
+    end
+    return acc * cis(c.ωc * t)
+end
+
+@inline function derivative(c::CarrierControl{T}, t::Real, ::DerivativeUpTo{N}) where {T,N}
+    env = derivative(c.envelope, t, DerivativeUpTo{N}())   # envelope⁽⁰⁾ … envelope⁽ᴺ⁾
+    iω = im * c.ωc
+    e = cis(c.ωc * t)
+    # The p-th carrier derivative is e^{iωt} Σ_{i=0}^p binom(p,i) envelope⁽ⁱ⁾ (iω)^{p-i}.
+    # Nothing here depends on the tuple index at the type level, so this stays type-stable.
+    return SVector(ntuple(Val(N + 1)) do p1
+        acc = zero(T)
+        @inbounds for i in 0:(p1 - 1)
+            acc += binomial(p1 - 1, i) * env[i+1] * iω^(p1 - 1 - i)
+        end
+        e * acc
+    end)
+end
+
+# ---------------------------------------------------------------------------------------------
+# Envelope / carrier introspection — a uniform interface over all controls
+# ---------------------------------------------------------------------------------------------
+
+"""
+    carrier_frequency(control) -> ωc
+
+The carrier-wave frequency of a control: `ωc` for a [`CarrierControl`](@ref), and `0` for any
+other control (no carrier).  Lets a method scan a heterogeneous set of controls uniformly.
+"""
+carrier_frequency(::AbstractControl) = 0
+carrier_frequency(c::CarrierControl) = c.ωc
+
+"""
+    envelope(control) -> control
+
+The slowly-varying envelope of a control: the wrapped envelope for a [`CarrierControl`](@ref),
+and the control itself otherwise (its envelope *is* itself, with zero carrier).
+"""
+envelope(c::AbstractControl) = c
+envelope(c::CarrierControl) = c.envelope

@@ -6,6 +6,7 @@ import LinearAlgebra: dot, mul!, I, Diagonal, cond, eigvals
 import LinearMaps: LinearMap
 import IterativeSolvers: gmres
 import Krylov
+import StaticArrays: SVector, SMatrix
 
 # Subpackage providing time-dependent controlled operators A(t) = Σₖ cₖ(t)·Aₖ.
 # Lives at src/ControlledOperators (wired in via [sources] in Project.toml).
@@ -14,6 +15,7 @@ using ControlledOperators
 # `derivative` here is the control derivative from ControlledOperators;
 # Polynomials.derivative is unused in this package, so no longer imported above.
 export AbstractControl, ConstantControl, FourierControl, FunctionControl, ScaledControl
+export CarrierControl, carrier_frequency, envelope
 export Derivative, DerivativeUpTo, derivative, erase_type
 export ControlledOperator, Operator, get_controls, evaluate, evaluate!
 export materialize, materialize!
@@ -44,13 +46,17 @@ include("filon_timestep.jl")
 export filon_timestep, Algorithm1, filon_solve, FilonProblem, get_LHS_mat, filon_timestep_integral_error
 include("controlled_operators.jl")
 export ControlledFunctionOp, ControlledOp
-include("hardcoded_lhs_rhs.jl")
-export filon_timestep_s0_backslash, filon_timestep_s0_gmres
-export filon_timestep_s1_backslash, filon_timestep_s1_gmres
-export filon_timestep_s2_backslash, filon_timestep_s2_gmres
-export filon_solve_hardcoded, filon_S_plus_S_minus
-
 include("spencer_hardcoded_lhs_rhs.jl")
 export Ws_explicit_implicit, S_explicit_implicit_filon, S_explicit_implicit_filon_s0, S_analysis_filon_s0, S_explicit_implicit_filon_s1, S_analysis_filon_s1
+
+# Hard-coded Filon method (Appendix A, s = 0,1,2) on the ControlledOperator interface.
+include("hardcoded_filon.jl")
+export filon_solve_hardcoded, filon_timestep_hardcoded, filon_weight_phases
+export StaticFilonWeights, DynamicFilonWeights
+
+# Controlled Filon method (Appendix B, s = 0,1,2): per-control carrier-wave ansatz.
+include("controlled_filon.jl")
+export controlled_filon_solve, controlled_filon_weights
+export StaticControlledFilonWeights, DynamicControlledFilonWeights
 
 end # module FilonResearch

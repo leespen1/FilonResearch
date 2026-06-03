@@ -79,4 +79,24 @@
         @test f(1 // 2) ≈ f(0.5)
         @test f(0.3f0) ≈ f(0.3) rtol = 1e-5
     end
+
+    @testset "CarrierControl" begin
+        env = FourierControl(0.3, [0.5], [0.2], 1.7)
+        ωc = 2.0
+        c = CarrierControl(env, ωc)
+        full(t) = env(t) * cis(ωc * t)                  # c(t) = envelope(t) e^{iωc t}
+        @test eltype(c) === ComplexF64
+        @test carrier_frequency(c) == ωc
+        @test envelope(c) === env
+        @test carrier_frequency(ConstantControl(1.0)) == 0   # uniform interface default
+        @test envelope(env) === env
+        @test c(0.4) ≈ full(0.4)
+        @test derivative(c, 0.4, Derivative{1}()) ≈ fd_deriv(full, 0.4, Val(1)) rtol = 1e-4
+        @test derivative(c, 0.4, Derivative{2}()) ≈ fd_deriv(full, 0.4, Val(2)) rtol = 1e-3
+        @test @inferred(derivative(c, 0.4, Derivative{2}())) isa ComplexF64
+        @test @inferred(derivative(c, 0.4, DerivativeUpTo{2}())) isa SVector{3,ComplexF64}
+        # zero carrier reproduces the envelope
+        c0 = CarrierControl(ConstantControl(1.0), 0.0)
+        @test c0(0.4) == 1.0 + 0.0im
+    end
 end

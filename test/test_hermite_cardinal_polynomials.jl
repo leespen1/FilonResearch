@@ -1,4 +1,8 @@
 using Test, FilonResearch, Polynomials
+# FilonResearch now re-exports ControlledOperators' `derivative`, which collides
+# with `Polynomials.derivative` (used below to differentiate polynomials).  An
+# explicit `using ...: derivative` overrides the ambiguous `using`-level name.
+using Polynomials: derivative
 using Random: MersenneTwister
 
 @testset "Hard-coded Hermite cardinal polynomial correctness" begin
