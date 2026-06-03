@@ -302,11 +302,11 @@ println("=" ^ 70)
 println("Generating experiment plot...")
 println("=" ^ 70)
 
-mkpath(joinpath(@__DIR__, "..", "Plots"))
-save(joinpath(@__DIR__, "..", "Plots", "rabi_experiments.png"), fig)
-save(joinpath(@__DIR__, "..", "Plots", "rabi_experiments.svg"), fig)
-save(joinpath(@__DIR__, "..", "Plots", "rabi_experiments.pdf"), fig)
-println("Saved figure to Plots/rabi_experiments.{png,svg,pdf}")
+mkpath(plotsdir("rabi_oscillator"))
+save(plotsdir("rabi_oscillator", "rabi_experiments.png"), fig)
+save(plotsdir("rabi_oscillator", "rabi_experiments.svg"), fig)
+save(plotsdir("rabi_oscillator", "rabi_experiments.pdf"), fig)
+println("Saved figure to ", plotsdir("rabi_oscillator", "rabi_experiments.{png,svg,pdf}"))
 
 
 # =============================================================================
@@ -429,10 +429,10 @@ amp_entries = [LineElement(color=colors[i]) for i in 1:4]
 amp_labels = [L"\textrm{Re}(u_1)", L"\textrm{Im}(u_1)", L"\textrm{Re}(u_2)", L"\textrm{Im}(u_2)"]
 Legend(fig2[4, 1:2], amp_entries, amp_labels, "Component", orientation=:horizontal, tellheight=true)
 
-save(joinpath(@__DIR__, "..", "Plots", "rabi_solutions.png"), fig2)
-save(joinpath(@__DIR__, "..", "Plots", "rabi_solutions.svg"), fig2)
-save(joinpath(@__DIR__, "..", "Plots", "rabi_solutions.pdf"), fig2)
-println("Saved figure to Plots/rabi_solutions.{png,svg,pdf}")
+save(plotsdir("rabi_oscillator", "rabi_solutions.png"), fig2)
+save(plotsdir("rabi_oscillator", "rabi_solutions.svg"), fig2)
+save(plotsdir("rabi_oscillator", "rabi_solutions.pdf"), fig2)
+println("Saved figure to ", plotsdir("rabi_oscillator", "rabi_solutions.{png,svg,pdf}"))
 
 display(fig2)
 display(fig)

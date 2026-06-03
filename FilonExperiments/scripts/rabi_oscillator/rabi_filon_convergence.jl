@@ -160,7 +160,7 @@ const ORDER_MARKERS = (:circle, :rect, :diamond)
 """
 Single combined log-log panel: 9 curves (3 methods × 3 orders), colour = method,
 marker = order s, with dotted-grey O(Δtᵖ) guide lines anchored to the Hermite
-curves.  Saves png/svg/pdf to `plotsdir()`.
+curves.  Saves png/svg/pdf to `plotsdir("rabi_oscillator")`.
 """
 function make_figure(nsteps_list, errors, titlestr, basename; ylims)
     fig = Figure(size = (7inch, 4.4inch), fontsize = 11)
@@ -206,11 +206,11 @@ function make_figure(nsteps_list, errors, titlestr, basename; ylims)
 
     colsize!(fig.layout, 1, Relative(0.74))
 
-    mkpath(plotsdir())
+    mkpath(plotsdir("rabi_oscillator"))
     for ext in ("png", "svg", "pdf")
-        save(plotsdir("$(basename).$(ext)"), fig)
+        save(plotsdir("rabi_oscillator", "$(basename).$(ext)"), fig)
     end
-    println("  saved → ", plotsdir("$(basename).{png,svg,pdf}"))
+    println("  saved → ", plotsdir("rabi_oscillator", "$(basename).{png,svg,pdf}"))
     return fig
 end
 

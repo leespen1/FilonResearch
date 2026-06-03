@@ -29,8 +29,8 @@ function collect_errors(ω_range=0:10, s_range=0:1, a=-1, b=1)
     end
     
     f = Polynomial([0, 1]) // Polynomial([1,0,1])
-    fa_derivs = [derivative(f, s)(a) for s in 0:maximum(s_range)]
-    fb_derivs = [derivative(f, s)(b) for s in 0:maximum(s_range)]
+    fa_derivs = [Polynomials.derivative(f, s)(a) for s in 0:maximum(s_range)]
+    fb_derivs = [Polynomials.derivative(f, s)(b) for s in 0:maximum(s_range)]
     @show fa_derivs fb_derivs
 
     Ei(x) = -expint(-x)
@@ -151,15 +151,15 @@ function main(ω_range=1:200, s_range=0:3, a=-1, b=1, relative=false)
     lines!(ax_true_sol, ω_range, log10.(abs.(true_sols)))
 
 
-    mkpath("./Plots/")
-    save("./Plots/integrand_a=$(a)_b=$(b).svg", fig)
-    save("./Plots/integrand_a=$(a)_b=$(b).png", fig)
-    save("./Plots/error_a=$(a)_b=$(b).svg", fig2)
-    save("./Plots/error_a=$(a)_b=$(b).png", fig2)
-    save("./Plots/rel_error_a=$(a)_b=$(b).svg", fig3)
-    save("./Plots/rel_error_a=$(a)_b=$(b).png", fig3)
-    save("./Plots/true_sol_a=$(a)_b=$(b).svg", fig4)
-    save("./Plots/true_sol_a=$(a)_b=$(b).png", fig4)
+    mkpath(plotsdir("scalar_explicit_filon"))
+    save(plotsdir("scalar_explicit_filon", "integrand_a=$(a)_b=$(b).svg"), fig)
+    save(plotsdir("scalar_explicit_filon", "integrand_a=$(a)_b=$(b).png"), fig)
+    save(plotsdir("scalar_explicit_filon", "error_a=$(a)_b=$(b).svg"), fig2)
+    save(plotsdir("scalar_explicit_filon", "error_a=$(a)_b=$(b).png"), fig2)
+    save(plotsdir("scalar_explicit_filon", "rel_error_a=$(a)_b=$(b).svg"), fig3)
+    save(plotsdir("scalar_explicit_filon", "rel_error_a=$(a)_b=$(b).png"), fig3)
+    save(plotsdir("scalar_explicit_filon", "true_sol_a=$(a)_b=$(b).svg"), fig4)
+    save(plotsdir("scalar_explicit_filon", "true_sol_a=$(a)_b=$(b).png"), fig4)
 
     return fig, fig2, errors_mat
 end

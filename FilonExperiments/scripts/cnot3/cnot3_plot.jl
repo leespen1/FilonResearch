@@ -98,7 +98,7 @@ end
 """
 Combined log-log convergence panel: colour = method, marker = order s, with
 dotted-grey O(Δtᵖ) guide lines anchored to the first available curve of each
-order.  Saves png/svg/pdf to `plotsdir()`.
+order.  Saves png/svg/pdf to `plotsdir("cnot3")`.
 """
 function make_convergence_figure(df, methods; basename = "cnot3_convergence")
     fig = Figure(size = (7.5inch, 4.6inch), fontsize = 11)
@@ -150,11 +150,11 @@ function make_convergence_figure(df, methods; basename = "cnot3_convergence")
            orientation = :vertical, tellheight = false, tellwidth = true)
     colsize!(fig.layout, 1, Relative(0.72))
 
-    mkpath(plotsdir())
+    mkpath(plotsdir("cnot3"))
     for ext in ("png", "svg", "pdf")
-        save(plotsdir("$(basename).$(ext)"), fig)
+        save(plotsdir("cnot3", "$(basename).$(ext)"), fig)
     end
-    println("  saved → ", plotsdir("$(basename).{png,svg,pdf}"))
+    println("  saved → ", plotsdir("cnot3", "$(basename).{png,svg,pdf}"))
     return fig
 end
 
@@ -179,11 +179,11 @@ function make_timing_figure(df, methods; basename = "cnot3_timing")
            [[METHOD_LABELS[m] for m in methods], ["s=0", "s=1", "s=2"]],
            ["Method", "Order"]; orientation = :vertical, tellheight = false, tellwidth = true)
     colsize!(fig.layout, 1, Relative(0.72))
-    mkpath(plotsdir())
+    mkpath(plotsdir("cnot3"))
     for ext in ("png", "svg", "pdf")
-        save(plotsdir("$(basename).$(ext)"), fig)
+        save(plotsdir("cnot3", "$(basename).$(ext)"), fig)
     end
-    println("  saved → ", plotsdir("$(basename).{png,svg,pdf}"))
+    println("  saved → ", plotsdir("cnot3", "$(basename).{png,svg,pdf}"))
     return fig
 end
 
