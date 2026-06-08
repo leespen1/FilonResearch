@@ -33,6 +33,9 @@ const prefix = get(ENV, "CNOT3_PREFIX", "cnot3Convergence")
 # a specific past collection (the subdirectory name under datadir(prefix)).
 const commit = get(ENV, "CNOT3_COMMIT", gitdescribe(projectdir()))
 const datapath = datadir(prefix, commit)
+# Each initial condition has its own row count and its own finest-run reference,
+# so we plot one at a time.  Override with CNOT3_INIT (e.g. "uniform").
+const init = get(ENV, "CNOT3_INIT", "basis")
 
 # Display order / labels / styling for the methods.
 const METHOD_ORDER  = (:hermite, :filon, :controlled_filon)
@@ -61,7 +64,11 @@ const NSTEPS_WINDOW = Dict{Symbol,Any}()   # e.g. :filon => (2^4, 2^14)
 
 df = collect_results(datapath)
 isempty(df) && error("No result files found in $(datapath). Run the collection script first.")
+df = df[df.initialCondition .== init, :]
+isempty(df) && error("No runs with initialCondition=$(init) in $(datapath). " *
+                     "Set CNOT3_INIT to one that was collected.")
 df.method = Symbol.(df.method)
+println("initialCondition = $(init)")
 println("Loaded $(nrow(df)) runs: ",
         join(["$(METHOD_LABELS[m])×$(count(==(m), df.method))" for m in unique(df.method)], ", "))
 

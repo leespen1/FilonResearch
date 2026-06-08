@@ -26,15 +26,16 @@ nGuardLevels = 1
 Tmax = 50.0
 refinementFactor = 2
 nsaves = 4
-initialCondition = "uniform"
 
 configs = NamedTuple[]
-for method in (:hermite, :filon, :controlled_filon)
-    for s in (0, 1), e in 4:6
-        push!(configs, (;
-            method, s, Tmax, initialCondition, nOscLevels, nGuardLevels,
-            nsaves, refinementFactor, nsteps = 2^e,
-        ))
+for initialCondition in ("basis", "uniform")
+    for method in (:hermite, :filon, :controlled_filon)
+        for s in (0, 1), e in 4:6
+            push!(configs, (;
+                method, s, Tmax, initialCondition, nOscLevels, nGuardLevels,
+                nsaves, refinementFactor, nsteps = 2^e,
+            ))
+        end
     end
 end
 
