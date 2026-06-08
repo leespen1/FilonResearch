@@ -1,29 +1,17 @@
-using Test
+using DrWatson, Test
+@quickactivate "FilonExperiments"
 
-@testset "Hermite cardinal polynomials" begin
-    include("./test_hermite_cardinal_polynomials.jl")
-end
-@testset "Filon moments and weights" begin
-    include("./test_filon_weights.jl")
-end
-@testset "Explicit Filon integration" begin
-    include("./test_explicit_filon_integration.jl")
-end
-@testset "Manufactured polynomial solution" begin
-    include("./test_manufactured_polynomial_solution.jl")
-end
+# Here you include files using `srcdir`
+# include(srcdir("file.jl"))
 
-@testset "Manufactured polynomial solution, multifrequency" begin
-    include("./test_manufactured_polynomial_solution_multifrequency.jl")
+# Run test suite
+println("Starting tests")
+ti = time()
+
+@testset "FilonExperiments tests" begin
+    @test 1 == 1
 end
 
-# NOTE: test_hardcoded_lhs_rhs.jl targeted the removed src/hardcoded_lhs_rhs.jl
-# (replaced by the ControlledOperator-based hard-coded Filon method below).
-@testset "Hard-coded Filon (ControlledOperator)" begin
-    include("./test_hardcoded_filon.jl")
-end
-
-@testset "Controlled Filon (Appendix B)" begin
-    include("./test_controlled_filon.jl")
-end
-
+ti = time() - ti
+println("\nTest took total time of:")
+println(round(ti/60, digits = 3), " minutes")

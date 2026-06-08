@@ -4,7 +4,7 @@
 # results are cached (a re-run skips them) and that the plotting script produces
 # a figure.  Not the real experiment.
 #
-#   julia --project=FilonExperiments FilonExperiments/scripts/cnot3/smoke_test.jl
+#   julia --project=. scripts/cnot3/smoke_test.jl
 
 using DrWatson
 @quickactivate "FilonExperiments"

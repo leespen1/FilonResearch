@@ -22,8 +22,8 @@
 # Reference solution:  Vern9 at abstol = reltol = 1e-13 for E ≠ 0 (no closed
 # form in the lab frame); the exact closed form for E = 0.
 #
-# Run:  julia --project=FilonExperiments \
-#         FilonExperiments/scripts/rabi_oscillator/rabi_filon_convergence.jl
+# Run:  julia --project=. \
+#         scripts/rabi_oscillator/rabi_filon_convergence.jl
 # =============================================================================
 
 using DrWatson

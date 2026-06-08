@@ -1,6 +1,6 @@
 # Scratch verification of the QGD → ControlledOperator adapters on a small CNOT3
 # system.  Not part of the experiment; run by hand:
-#   julia --project=FilonExperiments FilonExperiments/scripts/cnot3/verify_adapters.jl
+#   julia --project=. scripts/cnot3/verify_adapters.jl
 
 using DrWatson
 @quickactivate "FilonExperiments"

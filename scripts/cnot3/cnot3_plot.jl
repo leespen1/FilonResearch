@@ -11,8 +11,8 @@
 # off the DataFrame, so filtering ("ignore errors above X", "only these nsteps
 # for this method", …) is just a DataFrame operation — see `FILTERS` below.
 #
-# Run:  julia --project=FilonExperiments \
-#         FilonExperiments/scripts/cnot3/cnot3_plot.jl
+# Run:  julia --project=. \
+#         scripts/cnot3/cnot3_plot.jl
 # =============================================================================
 
 using DrWatson
