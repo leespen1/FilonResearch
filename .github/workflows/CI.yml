@@ -42,3 +42,31 @@ jobs:
       - uses: julia-actions/julia-runtest@v1
         with:
           project: ${{ matrix.package }}
+
+  # Umbrella-level integration tests, run in a lean environment (test/Project.toml)
+  # that excludes the plotting stack so this job does not precompile Makie. The
+  # umbrella is not a package, so julia-runtest (which calls Pkg.test) cannot be
+  # used; instantiate and run the script directly instead.
+  umbrella:
+    name: umbrella (no plots) - Julia ${{ matrix.version }} - ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        version:
+          - '1'
+        os:
+          - ubuntu-latest
+        arch:
+          - x64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: ${{ matrix.version }}
+          arch: ${{ matrix.arch }}
+      - uses: julia-actions/cache@v2
+      - name: Instantiate lean test environment
+        run: julia --project=test -e 'using Pkg; Pkg.instantiate()'
+      - name: Run umbrella tests
+        run: julia --project=test --color=yes test/runtests.jl

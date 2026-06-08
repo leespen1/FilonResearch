@@ -1,0 +1,19 @@
+# Lean test environment for the umbrella DrWatson project.
+#
+# This environment deliberately omits the plotting stack (CairoMakie/Makie) so
+# CI can exercise umbrella-level integration without paying the Makie precompile
+# cost. The plotting deps live in the root Project.toml for interactive and
+# experiment use; tests that need them do not belong here.
+#
+# Run with:  julia --project=test test/runtests.jl
+[deps]
+ControlledOperators = "e1fb17ce-2642-44fa-a2d5-f5681ff53a0f"
+FilonResearch = "3a284e70-3988-4fde-94af-e81b1d70ca0a"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[sources]
+ControlledOperators = {path = "../lib/ControlledOperators"}
+FilonResearch = {path = "../lib/FilonResearch"}
+
+[compat]
+julia = "1.11"
