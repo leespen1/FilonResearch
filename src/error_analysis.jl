@@ -1,6 +1,17 @@
 using DrWatson
 
 """
+    commit_datadir(prefix) -> String
+
+Data directory for collection `prefix`, namespaced by the current git commit
+(via DrWatson's `gitdescribe`, which appends `-dirty` when the working tree has
+uncommitted changes). Keeping each code version's output under its own commit
+subdirectory prevents `produce_or_load` from silently mixing results produced by
+different versions of the method.
+"""
+commit_datadir(prefix) = datadir(prefix, gitdescribe(projectdir()))
+
+"""
 Compute the stride needed to index hist_fine at the same timepoints as
 hist_coarse (assuming the columns of both histories represent values at equally
 spaced timepoints).

@@ -29,6 +29,10 @@ CairoMakie.set_theme!(CairoMakie.theme_latexfonts())
 const inch = 96
 
 const prefix = get(ENV, "CNOT3_PREFIX", "cnot3Convergence")
+# Plot the current commit's data by default; override with CNOT3_COMMIT to plot
+# a specific past collection (the subdirectory name under datadir(prefix)).
+const commit = get(ENV, "CNOT3_COMMIT", gitdescribe(projectdir()))
+const datapath = datadir(prefix, commit)
 
 # Display order / labels / styling for the methods.
 const METHOD_ORDER  = (:hermite, :filon, :controlled_filon)
@@ -55,8 +59,8 @@ const NSTEPS_WINDOW = Dict{Symbol,Any}()   # e.g. :filon => (2^4, 2^14)
 # Load + derive errors
 # -----------------------------------------------------------------------------
 
-df = collect_results(datadir(prefix))
-isempty(df) && error("No result files found in $(datadir(prefix)). Run the collection script first.")
+df = collect_results(datapath)
+isempty(df) && error("No result files found in $(datapath). Run the collection script first.")
 df.method = Symbol.(df.method)
 println("Loaded $(nrow(df)) runs: ",
         join(["$(METHOD_LABELS[m])×$(count(==(m), df.method))" for m in unique(df.method)], ", "))

@@ -58,7 +58,7 @@ end
 @everywhere include(srcdir("cnot3_run.jl"))        # make_initial_condition, run_simulation
 
 @everywhere const prefix = "cnot3Convergence"
-@everywhere const outdir = datadir(prefix)
+@everywhere const outdir = commit_datadir(prefix)
 
 @everywhere println("[", myid(), "] Finished setting up helper functions.")
 @everywhere flush(stdout)

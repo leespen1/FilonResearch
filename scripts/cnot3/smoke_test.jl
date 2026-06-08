@@ -18,7 +18,7 @@ include(srcdir("error_analysis.jl"))
 include(srcdir("cnot3_run.jl"))
 
 const prefix = "cnot3ConvergenceSmoke"
-const outdir = datadir(prefix)
+const outdir = commit_datadir(prefix)
 
 # Reduced problem: small Hilbert space, short pulse window, few steps/saves.
 nOscLevels = 3
