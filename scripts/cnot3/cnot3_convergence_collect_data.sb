@@ -22,8 +22,11 @@ echo "Number of CPUs Per Task        = $SLURM_CPUS_PER_TASK"
 echo "Memory per CPU                = $SLURM_MEM_PER_CPU"
 echo ""
 
+# The umbrella environment is instantiated and precompiled once ahead of time
+# (e.g. on a dev node); jobs assume a ready ~/.julia compile cache so they spend
+# wall time on the simulation, not on precompilation.
+
 # Any extra arguments to `sbatch <script> ...` are forwarded to the collection
 # script, so a single batch can target a subset of the sweep, e.g.
 #   sbatch cnot3_convergence_collect_data.sb --method hermite --nsteps 128,256,512
-julia --project -e 'import Pkg; Pkg.instantiate(); Pkg.precompile()'
 julia --project cnot3_convergence_collect_data.jl "$@"
