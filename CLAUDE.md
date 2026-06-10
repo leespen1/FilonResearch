@@ -127,6 +127,8 @@ Library packages:
 
 **Problem**: `filon_moments` in `lib/FilonResearch/src/filon_weights.jl` suffers from catastrophic cancellation when ω is small but nonzero. The oscillatory recurrence computes differences like `sin(w) - w·cos(w) ≈ w³/3`, losing digits when divided by powers of w. This causes Filon(ω≠0) to diverge for s≥1 when effective_ω = freq × 0.5 × dt becomes small (e.g. CNOT3 example with small Kerr frequencies, or any problem at high nsteps).
 
+Spencer's objection (2026-06-10): the CNOT3 divergence is probably not this issue. Filon is likely A-stable, but A-stability does not cover variable-coefficient problems, so blowup at coarse timesteps is a plain stability effect — and errors in the blowup region are meaningless anyway. The cancellation in `filon_moments` may still be real, but the CNOT3 example should not be taken as evidence for it.
+
 **Change**: Added an `elseif abs(w) < 2.0` branch in `filon_moments` that uses a Taylor series: `μ_n(w) = Σ_{k=0}^{30} (iw)^k/k! × (b^{n+k+1} - a^{n+k+1})/(n+k+1)`. This avoids cancellation entirely.
 
 **Status**: The Taylor branch is implemented but the `hardcoded_filon_weights` function still uses the old closed-form formulas and may have the same small-ω issue. The `test_manufactured_polynomial_solution.jl` multi-frequency convergence test (Part 5) was failing for s≥1 before this change was made — it is not yet confirmed whether the Taylor branch resolves those failures or if they are a separate issue.
