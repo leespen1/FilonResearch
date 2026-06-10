@@ -79,6 +79,106 @@ function QGD_prob_to_filon_hamiltonian(
 end
 
 # =============================================================================
+# Frame transformations for CarrierControl-based problems
+#
+# QuantumGateDesign's rotating-frame Hamiltonian applies the rotating wave
+# approximation (RWA): with α_k(t) = p_k(t) + i q_k(t) the complex envelope of
+# control k and S_k = a_k + a_k†, A_k = a_k − a_k†, the control term is
+#
+#     H_ctrl^rwa = Σₖ p_k S_k + q_k (i A_k)            (amplitude α_k on a_k).
+#
+# Both correspond to the laboratory-frame drive  f_k(t) (a_k + a_k†)  with the
+# real lab pulse  f_k(t) = 2 Re[α_k(t) e^{i ω_k t}],  ω_k the rotation (angular)
+# frequency of control k's subsystem.  The two functions below construct the
+# controls/pcof for the same physical drive in the other frames.  Each
+# `controls[k]` must be a QuantumGateDesign `CarrierControl` whose base control
+# stores a coefficient slice as [p-half; q-half] (the standard QGD layout), so
+# that envelope conjugation is "negate the q-half".
+# =============================================================================
+
+# The coefficient slice of carrier f within a CarrierControl's pcof.
+function carrier_slice(control::QuantumGateDesign.CarrierControl, pcof_k, f)
+    nbase = control.base_control.N_coeff
+    return pcof_k[(f - 1) * nbase + 1 : f * nbase]
+end
+
+# Conjugate a base-control envelope E = p + iq by negating the q-half.
+function conjugate_base_slice(slice)
+    iseven(length(slice)) || throw(ArgumentError(
+        "base-control slice length must be even ([p-half; q-half] layout)"))
+    out = copy(slice)
+    half = length(slice) ÷ 2
+    out[half + 1 : end] .*= -1
+    return out
+end
+
+"""
+    drop_rwa(controls, pcof, rotation_freqs) -> (controls, pcof)
+
+Rebuild rotating-frame `CarrierControl`s *without* the rotating wave
+approximation.  In the rotating frame the full control term is
+f_k(t)(a_k e^{−iω_k t} + a_k† e^{iω_k t}), i.e. complex amplitude on a_k
+
+    γ_k(t) = α_k(t) + conj(α_k(t)) e^{−2iω_k t} ,
+
+so each carrier Ω (envelope E) gains a partner at −(2ω_k + Ω) carrying the
+conjugated envelope.  `rotation_freqs[k]` is the angular rotation frequency
+(rad/time) of control k's subsystem.  The drift Hamiltonian is unchanged.
+"""
+function drop_rwa(controls, pcof, rotation_freqs)
+    length(controls) == length(rotation_freqs) || throw(ArgumentError(
+        "need one rotation frequency per control"))
+    new_controls = QuantumGateDesign.CarrierControl[]
+    new_pcof = Float64[]
+    for (k, control) in enumerate(controls)
+        control isa QuantumGateDesign.CarrierControl || throw(ArgumentError(
+            "frame transformations expect QuantumGateDesign.CarrierControls; " *
+            "control $k is a $(typeof(control))"))
+        pcof_k = QuantumGateDesign.get_control_vector_slice(pcof, controls, k)
+        Ω = control.carrier_frequencies
+        ω = rotation_freqs[k]
+        freqs = vcat(Ω, -2ω .- Ω)
+        push!(new_controls,
+              QuantumGateDesign.CarrierControl(control.base_control, freqs))
+        for f in eachindex(Ω)
+            append!(new_pcof, carrier_slice(control, pcof_k, f))
+        end
+        for f in eachindex(Ω)
+            append!(new_pcof, conjugate_base_slice(carrier_slice(control, pcof_k, f)))
+        end
+    end
+    return new_controls, new_pcof
+end
+
+"""
+    to_lab_frame(controls, pcof, rotation_freqs) -> (controls, pcof)
+
+Rebuild the controls so that the *p-part alone* equals the real laboratory
+pulse f_k(t) = 2 Re[α_k(t) e^{i ω_k t}]: carriers shift to ω_k + Ω and the
+coefficients double.  Intended for a lab-frame problem whose antisymmetric
+control operators are zero (the lab drive couples only through a_k + a_k†);
+the q-part of the returned controls is nonzero but must multiply a zero
+operator.
+"""
+function to_lab_frame(controls, pcof, rotation_freqs)
+    length(controls) == length(rotation_freqs) || throw(ArgumentError(
+        "need one rotation frequency per control"))
+    new_controls = QuantumGateDesign.CarrierControl[]
+    new_pcof = Float64[]
+    for (k, control) in enumerate(controls)
+        control isa QuantumGateDesign.CarrierControl || throw(ArgumentError(
+            "frame transformations expect QuantumGateDesign.CarrierControls; " *
+            "control $k is a $(typeof(control))"))
+        pcof_k = QuantumGateDesign.get_control_vector_slice(pcof, controls, k)
+        freqs = rotation_freqs[k] .+ control.carrier_frequencies
+        push!(new_controls,
+              QuantumGateDesign.CarrierControl(control.base_control, freqs))
+        append!(new_pcof, 2 .* pcof_k)
+    end
+    return new_controls, new_pcof
+end
+
+# =============================================================================
 # Adapters to the *new* ControlledOperator-based Filon methods
 # (`filon_solve_hardcoded`, `controlled_filon_solve`).
 #

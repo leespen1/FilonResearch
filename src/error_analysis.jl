@@ -209,10 +209,12 @@ function process_convergence_config(run_simulation_f, config, prefix, outdir)
     end
 
     nsteps_str = "$(config.refinementFactor)^$(round(Int, log(config.refinementFactor, config.nsteps)))"
+    frame_str = hasproperty(config, :frame) ? " frame=$(rpad(config.frame, 6))" : ""
     @printf(
-        "pid=%d method=%-8s s=%-2d nsteps=%-6s final_err=%-12s l2_err=%-12s t_elapsed=%-10.4e\n",
+        "pid=%d method=%-8s%s s=%-2d nsteps=%-6s final_err=%-12s l2_err=%-12s t_elapsed=%-10.4e\n",
         myid(),
         config.method,
+        frame_str,
         config.s,
         nsteps_str,
         ismissing(rich_final_err) ? "missing" : fmt(rich_final_err),

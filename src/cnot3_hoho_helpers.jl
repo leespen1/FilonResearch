@@ -4,23 +4,45 @@ This file contains helper functions for reproducing the dynamics in the
 optimized CNOT3 example in the High-Order Hermite Optimization paper.
 """
 
+# Frames in which the CNOT3 dynamics can be posed.  `:rwa` is the original HOHO
+# setting (rotating frame + rotating wave approximation); `:norwa` keeps the
+# rotating frame but retains the counter-rotating control terms; `:lab` is the
+# laboratory frame (transition frequencies on the drift diagonal, real drive
+# through a + a† only).  All three describe the same physical pulse
+# f_k(t) = 2 Re[α_k(t) e^{i ω_k t}], so `:norwa` and `:lab` are exactly
+# equivalent (related by the diagonal phase e^{iWt}), while `:rwa` differs by
+# the neglected counter-rotating terms.
+const CNOT3_FRAMES = (:rwa, :norwa, :lab)
+
+# Subsystem transition frequencies (storage, qubit b, qubit a) in GHz; the
+# rotating frame rotates each subsystem at its transition frequency.
+cnot3_hoho_transition_freqs() = (7.8447, 4.81526, 4.10595)
+
+# Angular rotation frequency (rad/ns) of the subsystem each control couples to.
+cnot3_hoho_rotation_freqs() = 2pi .* cnot3_hoho_transition_freqs()
+
+function check_cnot3_frame(frame)
+    frame in CNOT3_FRAMES ||
+        throw(ArgumentError("unknown frame :$frame; choose from $CNOT3_FRAMES"))
+end
+
 """
 Get the `SchrodingerProb` (i.e. the kind of problem that QuantumGateDesign can
-solve) used for the CNOT3 example in the HOHO paper.
+solve) used for the CNOT3 example in the HOHO paper, posed in `frame`
+(see `CNOT3_FRAMES`).
 """
 function cnot3_hoho_qgd_prob(
     ; N_osc_levels = 10,
     N_guard_levels = 2,
     Tmax = 550.0,
     nsteps = 0,
+    frame = :rwa,
 )
+    check_cnot3_frame(frame)
     subsystem_sizes = (N_osc_levels, 2+N_guard_levels, 2+N_guard_levels)
     essential_subsystem_sizes = (1, 2, 2)
 
     # Physical constants
-    fa = 4.10595
-    fb = 4.81526
-    fs = 7.8447
     xa = 2 * 0.1099
     xb = 2 * 0.1126
     xs = 0.002494^2/xa
@@ -28,8 +50,8 @@ function cnot3_hoho_qgd_prob(
     xas = sqrt(xa*xs)
     xbs = sqrt(xb*xs)
 
-    transition_freqs = (fs, fb, fa)
-    rotation_freqs = transition_freqs
+    transition_freqs = cnot3_hoho_transition_freqs()
+    rotation_freqs = frame === :lab ? 0.0 .* transition_freqs : transition_freqs
 
     kerr_coeffs = Symmetric(
         [xs   xbs   xas;
@@ -50,14 +72,33 @@ function cnot3_hoho_qgd_prob(
         gmres_reltol=1e-15,
     )
 
+    if frame === :lab
+        # The lab drive f_k(t)(a_k + a_k†) has no antisymmetric part; the
+        # q-part of the lab-frame controls must multiply a zero operator.
+        prob.asym_operators = [zero(op) for op in prob.asym_operators]
+    end
+
     return prob
 end
 
 """
 Get the controls and control vector used to implement the CNOT3 gate which was
-optimized in the HOHO paper.
+optimized in the HOHO paper, expressed in `frame` (see `CNOT3_FRAMES`).  The
+optimization was performed in the `:rwa` frame; the other frames re-express the
+same physical pulse via `drop_rwa` / `to_lab_frame`.
 """
-function cnot3_hoho_controls_and_pcof()
+function cnot3_hoho_controls_and_pcof(; frame = :rwa)
+    check_cnot3_frame(frame)
+    controls, pcof = cnot3_hoho_rwa_controls_and_pcof()
+    if frame === :norwa
+        controls, pcof = drop_rwa(controls, pcof, cnot3_hoho_rotation_freqs())
+    elseif frame === :lab
+        controls, pcof = to_lab_frame(controls, pcof, cnot3_hoho_rotation_freqs())
+    end
+    return controls, pcof
+end
+
+function cnot3_hoho_rwa_controls_and_pcof()
     degree = 14
     D1 = 16
     Nctrl = 3 # Number of control functions

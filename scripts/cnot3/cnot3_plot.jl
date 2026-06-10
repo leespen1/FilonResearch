@@ -36,6 +36,9 @@ const datapath = datadir(prefix, commit)
 # Each initial condition has its own row count and its own finest-run reference,
 # so we plot one at a time.  Override with CNOT3_INIT (e.g. "uniform").
 const init = get(ENV, "CNOT3_INIT", "basis")
+# Solutions differ across frames, so each frame likewise gets its own reference
+# and its own figure.  Override with CNOT3_FRAME ("rwa", "norwa", or "lab").
+const frame = get(ENV, "CNOT3_FRAME", "rwa")
 
 # Display order / labels / styling for the methods.
 const METHOD_ORDER  = (:hermite, :filon, :controlled_filon)
@@ -67,8 +70,11 @@ isempty(df) && error("No result files found in $(datapath). Run the collection s
 df = df[df.initialCondition .== init, :]
 isempty(df) && error("No runs with initialCondition=$(init) in $(datapath). " *
                      "Set CNOT3_INIT to one that was collected.")
+df = df[df.frame .== frame, :]
+isempty(df) && error("No runs with frame=$(frame) (initialCondition=$(init)) in " *
+                     "$(datapath). Set CNOT3_FRAME to one that was collected.")
 df.method = Symbol.(df.method)
-println("initialCondition = $(init)")
+println("initialCondition = $(init), frame = $(frame)")
 println("Loaded $(nrow(df)) runs: ",
         join(["$(METHOD_LABELS[m])×$(count(==(m), df.method))" for m in unique(df.method)], ", "))
 
@@ -111,10 +117,10 @@ Combined log-log convergence panel: colour = method, marker = order s, with
 dotted-grey O(Δtᵖ) guide lines anchored to the first available curve of each
 order.  Saves png/svg/pdf to `plotsdir("cnot3")`.
 """
-function make_convergence_figure(df, methods; basename = "cnot3_convergence")
+function make_convergence_figure(df, methods; basename = "cnot3_convergence_$(frame)")
     fig = Figure(size = (7.5inch, 4.6inch), fontsize = 11)
     Label(fig[0, 1:2],
-          L"\textrm{CNOT3\;gate\;convergence}\;\;(N_{\mathrm{osc}}=%$(ref.nOscLevels),\;T=%$(Tmax))";
+          L"\textrm{CNOT3\;gate\;convergence}\;\;(N_{\mathrm{osc}}=%$(ref.nOscLevels),\;T=%$(Tmax),\;\textrm{%$(frame)\;frame})";
           fontsize = 13, padding = (0, 0, 6, 0))
     ax = Axis(fig[1, 1];
               xlabel = "Number of timesteps", ylabel = "Final-time 2-norm error",
@@ -170,9 +176,10 @@ function make_convergence_figure(df, methods; basename = "cnot3_convergence")
 end
 
 "Wall-clock time vs nsteps (log-log), same colour/marker scheme."
-function make_timing_figure(df, methods; basename = "cnot3_timing")
+function make_timing_figure(df, methods; basename = "cnot3_timing_$(frame)")
     fig = Figure(size = (7.5inch, 4.6inch), fontsize = 11)
-    Label(fig[0, 1:2], L"\textrm{CNOT3\;wall-clock\;time}"; fontsize = 13, padding = (0, 0, 6, 0))
+    Label(fig[0, 1:2], L"\textrm{CNOT3\;wall-clock\;time}\;\;(\textrm{%$(frame)\;frame})";
+          fontsize = 13, padding = (0, 0, 6, 0))
     ax = Axis(fig[1, 1]; xlabel = "Number of timesteps", ylabel = "Solve time (s)",
               xscale = log10, yscale = log10)
     for m in methods, (si, s) in enumerate(SVALS)

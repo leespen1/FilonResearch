@@ -39,13 +39,15 @@ end
 # time of the (post-compilation) solve, the saved times, and the config fields
 # (so `collect_results` exposes the parameter columns directly).
 function run_simulation(config)
-    qgd_prob = cnot3_hoho_qgd_prob(
+    frame = Symbol(config.frame)
+    qgd_prob = cnot3_hoho_qgd_prob(;
         N_osc_levels = config.nOscLevels,
         N_guard_levels = config.nGuardLevels,
         Tmax = config.Tmax,
+        frame,
     )
     initial_condition = make_initial_condition(config.initialCondition, qgd_prob)
-    controls, pcof = cnot3_hoho_controls_and_pcof()
+    controls, pcof = cnot3_hoho_controls_and_pcof(; frame)
 
     order = 2 * (config.s + 1)
     nsteps = config.nsteps

@@ -29,6 +29,11 @@ narrow the sweep so a single job — local or on SLURM — can target a batch:
   * `--nsteps 128,256,512`     explicit step counts (overrides the 2^e defaults)
   * `--init basis,uniform`     initial condition(s): `basis` (default, full
                                essential basis / gate states), `uniform`, or `eN`
+  * `--frame rwa,norwa,lab`    frame(s) the dynamics are posed in: `rwa`
+                               (rotating frame + RWA, the original HOHO
+                               setting), `norwa` (rotating frame keeping the
+                               counter-rotating control terms), `lab`
+                               (laboratory frame)
 
     julia --project cnot3_convergence_collect_data.jl --method hermite --nsteps 128,256,512
     sbatch cnot3_convergence_collect_data.sb --method hermite --init uniform
@@ -56,6 +61,7 @@ nsaves = 16
 initialCondition = "basis"
 
 all_methods = (:hermite, :filon, :controlled_filon)
+all_frames = ("rwa", "norwa", "lab")
 
 s_values = (0, 1, 2)                       # order = 2(s+1) ∈ {2,4,6}
 filon_step_exponents   = 4:16              # nsteps = 2^e for Filon / controlled-Filon
@@ -67,7 +73,7 @@ hermite_step_exponents = 4:22              # Hermite is cheap per step, push it 
 # Parse `--flag value` pairs into an override for methods / s / nsteps; each is
 # `nothing` when the flag is absent, in which case the default above is used.
 function parse_selection(args)
-    methods = s_sel = nsteps = inits = nothing
+    methods = s_sel = nsteps = inits = frames = nothing
     i = firstindex(args)
     while i <= lastindex(args)
         flag = args[i]
@@ -81,13 +87,15 @@ function parse_selection(args)
             nsteps = parse.(Int, split(value, ','))
         elseif flag == "--init"
             inits = String.(split(value, ','))
+        elseif flag in ("--frame", "--frames")
+            frames = String.(split(value, ','))
         else
             throw(ArgumentError(
-                "unknown flag '$flag' (expected --method, --s, --nsteps, or --init)"))
+                "unknown flag '$flag' (expected --method, --s, --nsteps, --init, or --frame)"))
         end
         i += 2
     end
-    return (; methods, s_sel, nsteps, inits)
+    return (; methods, s_sel, nsteps, inits, frames)
 end
 
 selection = parse_selection(ARGS)
@@ -95,6 +103,7 @@ selection = parse_selection(ARGS)
 selected_methods  = something(selection.methods, collect(all_methods))
 selected_s_values = something(selection.s_sel, collect(s_values))
 selected_inits    = something(selection.inits, [initialCondition])
+selected_frames   = something(selection.frames, collect(all_frames))
 
 for m in selected_methods
     m in all_methods ||
@@ -104,6 +113,10 @@ for ic in selected_inits
     ic in ("basis", "uniform") || occursin(r"^e\d+$", ic) ||
         throw(ArgumentError("unknown initial condition '$ic'; " *
             "choose from \"basis\", \"uniform\", or \"eN\""))
+end
+for fr in selected_frames
+    fr in all_frames ||
+        throw(ArgumentError("unknown frame '$fr'; choose from $all_frames"))
 end
 
 # ============================================================
@@ -135,7 +148,7 @@ end
 # ============================================================
 
 configs = NamedTuple[]
-for initialCondition in selected_inits, method in selected_methods
+for initialCondition in selected_inits, frame in selected_frames, method in selected_methods
     # Explicit --nsteps overrides the per-method 2^e defaults.
     step_counts = if selection.nsteps !== nothing
         selection.nsteps
@@ -147,7 +160,7 @@ for initialCondition in selected_inits, method in selected_methods
         mod(nsteps, nsaves) == 0 ||
             throw(ArgumentError("nsteps=$nsteps must be divisible by nsaves=$nsaves"))
         push!(configs, (;
-            method, s, Tmax, initialCondition, nOscLevels, nGuardLevels,
+            method, frame, s, Tmax, initialCondition, nOscLevels, nGuardLevels,
             nsaves, refinementFactor, nsteps,
         ))
     end

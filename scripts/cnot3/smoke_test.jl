@@ -32,10 +32,19 @@ for initialCondition in ("basis", "uniform")
     for method in (:hermite, :filon, :controlled_filon)
         for s in (0, 1), e in 4:6
             push!(configs, (;
-                method, s, Tmax, initialCondition, nOscLevels, nGuardLevels,
-                nsaves, refinementFactor, nsteps = 2^e,
+                method, frame = "rwa", s, Tmax, initialCondition, nOscLevels,
+                nGuardLevels, nsaves, refinementFactor, nsteps = 2^e,
             ))
         end
+    end
+end
+# The other frames, exercised on a smaller slice of the sweep.
+for frame in ("norwa", "lab")
+    for method in (:hermite, :filon, :controlled_filon), e in 4:6
+        push!(configs, (;
+            method, frame, s = 0, Tmax, initialCondition = "uniform", nOscLevels,
+            nGuardLevels, nsaves, refinementFactor, nsteps = 2^e,
+        ))
     end
 end
 
