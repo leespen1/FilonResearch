@@ -27,3 +27,7 @@ end
     include("./test_controlled_filon.jl")
 end
 
+@testset "Solve diagnostics (FilonSolveStats)" begin
+    include("./test_solve_stats.jl")
+end
+

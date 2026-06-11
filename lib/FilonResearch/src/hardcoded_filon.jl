@@ -308,22 +308,26 @@ end
 # Timestepping drivers
 # -----------------------------------------------------------------------------
 
-function _solve_static(co, ψ0, frequencies, Δt, nsteps, vs::Val, save_every, save_final_only)
+function _solve_static(co, ψ0, frequencies, Δt, nsteps, vs::Val, save_every,
+                       save_final_only, stats)
     return _solve_static(co, ψ0, frequencies, Δt, nsteps, vs, save_every,
-                         save_final_only, Val(_nstate(co)))
+                         save_final_only, stats, Val(_nstate(co)))
 end
 
 function _solve_static(co, ψ0, frequencies, Δt, nsteps, ::Val{S}, save_every,
-                       save_final_only, ::Val{N}) where {S,N}
+                       save_final_only, stats, ::Val{N}) where {S,N}
     wp = _static_weights(co, frequencies, Δt, Val(S), Val(N))
+    _stats_init!(stats, nsteps, false)
     ψ = SVector{N,ComplexF64}(ψ0)
     A_n = _matderivs(co, zero(Δt), Val(S))
 
     if save_final_only
         @inbounds for n in 1:nsteps
+            t0 = _stats_tick(stats)
             A_np1 = _matderivs(co, n * Δt, Val(S))
             ψ = _filon_step_static(A_n, A_np1, ψ, wp)
             A_n = A_np1
+            _stats_record_static!(stats, t0)
         end
         return Vector(ψ)
     end
@@ -333,9 +337,11 @@ function _solve_static(co, ψ0, frequencies, Δt, nsteps, ::Val{S}, save_every,
     history[:, 1] .= ψ
     col = 2
     @inbounds for n in 1:nsteps
+        t0 = _stats_tick(stats)
         A_np1 = _matderivs(co, n * Δt, Val(S))
         ψ = _filon_step_static(A_n, A_np1, ψ, wp)
         A_n = A_np1
+        _stats_record_static!(stats, t0)
         if col <= length(save_idx) && save_idx[col] == n
             history[:, col] .= ψ
             col += 1
@@ -345,7 +351,7 @@ function _solve_static(co, ψ0, frequencies, Δt, nsteps, ::Val{S}, save_every,
 end
 
 function _solve_dynamic(co, ψ0, frequencies, Δt, nsteps, ::Val{S}, save_every,
-                        save_final_only, warm_start, atol, rtol) where {S}
+                        save_final_only, warm_start, atol, rtol, stats) where {S}
     N = _nstate(co)
     wp = _dynamic_weights(co, frequencies, Δt, Val(S))
     ws = _FilonDynWS(N)
@@ -358,6 +364,8 @@ function _solve_dynamic(co, ψ0, frequencies, Δt, nsteps, ::Val{S}, save_every,
         A_np1, wp.WI, wp.freqs, ws)
     L = LinearMap{ComplexF64}(ia, N; ismutating = true)
     kws = Krylov.krylov_workspace(Val(:gmres), L, ws.rhs)
+    _stats_init!(stats, nsteps, true)
+    warned = false
 
     save_final_only || (save_idx = _save_indices(nsteps, save_every))
     save_final_only || (history = Matrix{ComplexF64}(undef, N, length(save_idx)))
@@ -365,6 +373,7 @@ function _solve_dynamic(co, ψ0, frequencies, Δt, nsteps, ::Val{S}, save_every,
     col = 2
 
     @inbounds for n in 1:nsteps
+        t0 = _stats_tick(stats)
         A_np1 = _opderivs(co, n * Δt, Val(S))
         # RHS = ψ + M_E ψ   (explicit side applied to the state)
         _apply_M!(ws.Mψ, ψ, A_n, wp.WE, wp.freqs, ws, Val(S))
@@ -378,6 +387,11 @@ function _solve_dynamic(co, ψ0, frequencies, Δt, nsteps, ::Val{S}, save_every,
         Krylov.gmres!(kws, L, ws.rhs; atol = atol, rtol = rtol)
         ψ .= Krylov.solution(kws)
         A_n = A_np1
+        _stats_record_dynamic!(stats, t0, kws)
+        if !warned && !Krylov.issolved(kws)
+            warned = true
+            @warn "GMRES did not converge at a Filon timestep; continuing" step = n niters = Krylov.iteration_count(kws) atol rtol
+        end
         if !save_final_only && col <= length(save_idx) && save_idx[col] == n
             history[:, col] .= ψ
             col += 1
@@ -458,13 +472,18 @@ final step if it is not a multiple of `save_every`).
   otherwise takes *many* iterations; in the well-conditioned, few-iteration
   regime typical of a converged solve it is a wash (or slightly slower), which
   is why it defaults off.  Ignored by the static variant (which solves directly).
+- `stats::Union{Nothing,FilonSolveStats} = nothing` — pass a
+  [`FilonSolveStats`](@ref) to collect per-step wall times and (dynamic variant
+  only) GMRES iteration counts and convergence flags.  The collector is emptied
+  at the start of the solve.  The default `nothing` adds zero overhead.
 """
 function filon_solve_hardcoded(co::ControlledOperator, ψ0::AbstractVector,
                                frequencies::AbstractVector, Δt::Real, nsteps::Integer,
                                s::Integer; save_every::Integer = 1,
                                save_final_only::Bool = false, variant::Symbol = :auto,
                                gmres_atol::Real = 1e-13, gmres_rtol::Real = 1e-13,
-                               warm_start::Bool = false)
+                               warm_start::Bool = false,
+                               stats::Union{Nothing,FilonSolveStats} = nothing)
     0 <= s <= 2 || throw(ArgumentError("hard-coded Filon supports s ∈ {0,1,2}; got s=$s"))
     nsteps >= 1 || throw(ArgumentError("nsteps must be ≥ 1; got $nsteps"))
     save_every >= 1 || throw(ArgumentError("save_every must be ≥ 1; got $save_every"))
@@ -476,9 +495,10 @@ function filon_solve_hardcoded(co::ControlledOperator, ψ0::AbstractVector,
 
     if _resolve_variant(co, variant) === :static
         return _solve_static(co, ψ0, frequencies, Δt, nsteps, Val(Int(s)),
-                             save_every, save_final_only)
+                             save_every, save_final_only, stats)
     else
         return _solve_dynamic(co, ψ0, frequencies, Δt, nsteps, Val(Int(s)),
-                             save_every, save_final_only, warm_start, gmres_atol, gmres_rtol)
+                             save_every, save_final_only, warm_start, gmres_atol, gmres_rtol,
+                             stats)
     end
 end

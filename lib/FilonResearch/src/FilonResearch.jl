@@ -49,6 +49,10 @@ export ControlledFunctionOp, ControlledOp
 include("spencer_hardcoded_lhs_rhs.jl")
 export Ws_explicit_implicit, S_explicit_implicit_filon, S_explicit_implicit_filon_s0, S_analysis_filon_s0, S_explicit_implicit_filon_s1, S_analysis_filon_s1
 
+# Opt-in per-timestep diagnostics shared by the hard-coded and controlled drivers.
+include("solve_stats.jl")
+export FilonSolveStats
+
 # Hard-coded Filon method (Appendix A, s = 0,1,2) on the ControlledOperator interface.
 include("hardcoded_filon.jl")
 export filon_solve_hardcoded, filon_timestep_hardcoded, filon_weight_phases

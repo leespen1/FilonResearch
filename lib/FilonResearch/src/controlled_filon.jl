@@ -272,7 +272,7 @@ end
 end
 
 function _controlled_solve_dynamic(co, ψ0, frequencies, Δt, nsteps, ::Val{S}, save_every,
-                                   save_final_only, atol, rtol) where {S}
+                                   save_final_only, atol, rtol, stats) where {S}
     N = _nstate(co)
     ncontrol = length(co.matrices)
     envco = _envelope_operator(co)
@@ -291,6 +291,8 @@ function _controlled_solve_dynamic(co, ψ0, frequencies, Δt, nsteps, ::Val{S}, 
                                                        freqs, ws)
     L = LinearMap{ComplexF64}(ia, N; ismutating = true)
     kws = Krylov.krylov_workspace(Val(:gmres), L, ws.rhs)
+    _stats_init!(stats, nsteps, true)
+    warned = false
 
     save_final_only || (save_idx = _save_indices(nsteps, save_every))
     save_final_only || (history = Matrix{ComplexF64}(undef, N, length(save_idx)))
@@ -298,6 +300,7 @@ function _controlled_solve_dynamic(co, ψ0, frequencies, Δt, nsteps, ::Val{S}, 
     col = 2
 
     for n in 1:nsteps
+        t0 = _stats_tick(stats)
         t_n = (n - 1) * Δt; t_np1 = n * Δt; mid = t_n + Δt / 2
         @. ws.φ = cis(wp.ωc * mid)
         # explicit side:  rhs = ψ + M_E ψ   (applied to the state, in place)
@@ -313,6 +316,11 @@ function _controlled_solve_dynamic(co, ψ0, frequencies, Δt, nsteps, ::Val{S}, 
         ia.c0 = c0I; ia.c1 = c1I; ia.c2 = c2I
         Krylov.gmres!(kws, L, ws.rhs; atol = atol, rtol = rtol)
         ψ .= Krylov.solution(kws)
+        _stats_record_dynamic!(stats, t0, kws)
+        if !warned && !Krylov.issolved(kws)
+            warned = true
+            @warn "GMRES did not converge at a Filon timestep; continuing" step = n niters = Krylov.iteration_count(kws) atol rtol
+        end
         if !save_final_only && col <= length(save_idx) && save_idx[col] == n
             history[:, col] .= ψ
             col += 1
@@ -325,20 +333,24 @@ end
 # STATIC driver
 # -----------------------------------------------------------------------------
 
-function _controlled_solve_static(co, ψ0, frequencies, Δt, nsteps, vs::Val, save_every, save_final_only)
+function _controlled_solve_static(co, ψ0, frequencies, Δt, nsteps, vs::Val, save_every,
+                                  save_final_only, stats)
     return _controlled_solve_static(co, ψ0, frequencies, Δt, nsteps, vs, save_every,
-                                    save_final_only, Val(_nstate(co)))
+                                    save_final_only, stats, Val(_nstate(co)))
 end
 
 function _controlled_solve_static(co, ψ0, frequencies, Δt, nsteps, ::Val{S}, save_every,
-                                  save_final_only, ::Val{N}) where {S,N}
+                                  save_final_only, stats, ::Val{N}) where {S,N}
     envco = _envelope_operator(co)
     wp = _static_controlled_weights(co, frequencies, Δt, Val(S), Val(N))
+    _stats_init!(stats, nsteps, false)
     ψ = SVector{N,ComplexF64}(ψ0)
 
     if save_final_only
         @inbounds for n in 1:nsteps
+            t0 = _stats_tick(stats)
             ψ = _controlled_step_static(co, envco, ψ, (n - 1) * Δt, Δt, wp, Val(N))
+            _stats_record_static!(stats, t0)
         end
         return Vector(ψ)
     end
@@ -348,7 +360,9 @@ function _controlled_solve_static(co, ψ0, frequencies, Δt, nsteps, ::Val{S}, s
     history[:, 1] .= ψ
     col = 2
     @inbounds for n in 1:nsteps
+        t0 = _stats_tick(stats)
         ψ = _controlled_step_static(co, envco, ψ, (n - 1) * Δt, Δt, wp, Val(N))
+        _stats_record_static!(stats, t0)
         if col <= length(save_idx) && save_idx[col] == n
             history[:, col] .= ψ
             col += 1
@@ -372,8 +386,8 @@ component); each control term `k` is integrated with the modified ansatz
 `ω + ω_{c,k}`.
 
 The keyword arguments (`save_every`, `save_final_only`, `variant`, `gmres_atol`,
-`gmres_rtol`) and the return value match [`filon_solve_hardcoded`](@ref): an
-`N × nsaves` history matrix, or just the final state if `save_final_only`.
+`gmres_rtol`, `stats`) and the return value match [`filon_solve_hardcoded`](@ref):
+an `N × nsaves` history matrix, or just the final state if `save_final_only`.
 
 When every carrier frequency is zero this method coincides with
 [`filon_solve_hardcoded`](@ref) (regular Filon).
@@ -382,7 +396,8 @@ function controlled_filon_solve(co::ControlledOperator, ψ0::AbstractVector,
                                 frequencies::AbstractVector, Δt::Real, nsteps::Integer,
                                 s::Integer; save_every::Integer = 1,
                                 save_final_only::Bool = false, variant::Symbol = :auto,
-                                gmres_atol::Real = 1e-13, gmres_rtol::Real = 1e-13)
+                                gmres_atol::Real = 1e-13, gmres_rtol::Real = 1e-13,
+                                stats::Union{Nothing,FilonSolveStats} = nothing)
     0 <= s <= 2 || throw(ArgumentError("controlled Filon supports s ∈ {0,1,2}; got s=$s"))
     nsteps >= 1 || throw(ArgumentError("nsteps must be ≥ 1; got $nsteps"))
     save_every >= 1 || throw(ArgumentError("save_every must be ≥ 1; got $save_every"))
@@ -394,9 +409,10 @@ function controlled_filon_solve(co::ControlledOperator, ψ0::AbstractVector,
 
     if _resolve_variant(co, variant) === :static
         return _controlled_solve_static(co, ψ0, frequencies, Δt, nsteps, Val(Int(s)),
-                                        save_every, save_final_only)
+                                        save_every, save_final_only, stats)
     else
         return _controlled_solve_dynamic(co, ψ0, frequencies, Δt, nsteps, Val(Int(s)),
-                                         save_every, save_final_only, gmres_atol, gmres_rtol)
+                                         save_every, save_final_only, gmres_atol, gmres_rtol,
+                                         stats)
     end
 end
