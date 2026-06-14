@@ -4,7 +4,9 @@ using Serialization, Printf
 const REPO = normpath(joinpath(@__DIR__, "..", ".."))
 results = deserialize(joinpath(REPO, "data", "oscillatory", "osc_data.jls"))
 
-tag(m, s) = m === :rk4 ? "RK4" : (m === :filon ? "Filon" : "cFilon") * " s=$s"
+tag(m, s) = m === :rk4 ? "RK4" :
+            m === :gl  ? "GL order $(2s)" :
+            (m === :filon ? "Filon" : "cFilon") * " s=$s"
 
 # cheapest wall-time among points reaching err ≤ target (Inf if never)
 function time_to(P, m, s, target)

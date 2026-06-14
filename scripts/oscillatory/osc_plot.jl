@@ -15,9 +15,11 @@ TITLES = Dict("parametric" => "P1  parametric flux modulation (2 qubits)",
               "chirp"      => "P2  chirped drive (2-level)",
               "fewcycle"   => "P3  few-cycle Gaussian pulse (2-level)")
 
-style(m, s) = m === :filon  ? (SCOL[s], :solid,  :circle,    "Filon s=$s") :
-              m === :cfilon ? (SCOL[s], :dash,   :utriangle, "cFilon s=$s") :
-                              (:black,  :dot,    :xcross,    "RK4")
+# colour = ORDER (so matched-order methods share a colour), linestyle = method
+style(m, s) = m === :filon  ? (SCOL[s],   :solid,   :circle,    "Filon s=$s (ord $(2s+2))") :
+              m === :cfilon ? (SCOL[s],   :dash,    :utriangle, "cFilon s=$s") :
+              m === :gl     ? (SCOL[s-1], :dashdot, :diamond,   "GL order $(2s)") :
+                              (:black,    :dot,     :xcross,    "RK4")
 
 function panel_conv(ax, P)
     ns = 2.0 .^ P.es
@@ -57,4 +59,32 @@ for (ri, P) in enumerate(results)
 end
 save(joinpath(PLOTS, "osc_convergence.png"), fig; px_per_unit = 2)
 println("wrote ", joinpath(PLOTS, "osc_convergence.png"))
+
+# ---- ω-scaling figure (fast diagonal ω₀ + slow coupling) ----
+om = deserialize(joinpath(REPO, "data", "oscillatory", "osc_omega.jls"))
+mstyle = Dict(:filon => (:firebrick, :solid, :circle, "Filon s=2"),
+              :cfilon => (:orange, :dash, :utriangle, "cFilon s=2"),
+              :gl6 => (:seagreen, :dashdot, :diamond, "GL order 6"),
+              :rk4 => (:black, :dot, :xcross, "RK4"))
+figO = Figure(size = (8.5INCH, 3.8INCH), fontsize = 11)
+Label(figO[0, 1:2], "Cost vs carrier ω₀  (fast diagonal + slow coupling); target err $(om.target)";
+      fontsize = 12, font = :bold)
+axN = Axis(figO[1, 1]; xlabel = "ω₀", ylabel = "min nsteps to target",
+           xscale = log10, yscale = log10, title = "step count (all ∝ ω₀)")
+for m in om.methods
+    c, ls, mk, lab = mstyle[m]
+    scatterlines!(axN, om.ω0s, Float64.(om.minN[m]); color = c, linestyle = ls,
+                  marker = mk, label = lab)
+end
+lines!(axN, om.ω0s, om.minN[:filon][1] .* om.ω0s ./ om.ω0s[1];
+       color = (:gray, 0.5), linestyle = :dot)            # slope-1 guide
+axislegend(axN; position = :lt, labelsize = 8)
+axT = Axis(figO[1, 2]; xlabel = "ω₀", ylabel = "wall-clock to target (s)",
+           xscale = log10, yscale = log10, title = "wall-clock (Filon cheapest)")
+for m in om.methods
+    c, ls, mk, _ = mstyle[m]
+    scatterlines!(axT, om.ω0s, cap.(om.minT[m]); color = c, linestyle = ls, marker = mk)
+end
+save(joinpath(PLOTS, "osc_omega.png"), figO; px_per_unit = 2)
+println("wrote ", joinpath(PLOTS, "osc_omega.png"))
 println("OSC_PLOT_DONE")
