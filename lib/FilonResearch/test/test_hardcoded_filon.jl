@@ -1,7 +1,8 @@
 using FilonResearch, Test, LinearAlgebra
 using StaticArrays
 import FilonResearch: _filon_step_static, _matderivs, _apply_M!, _opderivs,
-    _FilonDynWS, _static_weights, _dynamic_weights
+    _FilonDynWS, _static_weights, _dynamic_weights,
+    _apply_M_efficient!, _FilonEfficientWS
 
 # =============================================================================
 # Problem builders — each returns matched static (SMatrix tuple) and dynamic
@@ -259,4 +260,75 @@ end
         prob.frequencies, 0.1, 10, 1; save_every = 0)          # save_every < 1
     @test_throws DimensionMismatch filon_solve_hardcoded(prob.co_static, prob.ψ0,
         [ω], 0.1, 10, 1)                                       # wrong #frequencies
+end
+
+# =============================================================================
+# 8. Efficient (reorganized "second ordering") matrix-free apply: it is
+#    algebraically identical to the naive apply, allocation-free, and the
+#    `efficient` keyword is dynamic-only.
+# =============================================================================
+@testset "Efficient apply equivalence and allocation" begin
+    prob = mixed_freq_problem(10.0, 7.0)            # nonzero, non-uniform Ω; time-dependent A
+    Δt = 0.01
+    # The reorganization must reproduce the naive apply to round-off.
+    @testset "matches _apply_M!" begin
+        for s in 0:2
+            vs = Val(s)
+            wpd = _dynamic_weights(prob.co_dynamic, prob.frequencies, Δt, vs)
+            ops = _opderivs(prob.co_dynamic, 0.37, vs)
+            x = ComplexF64[0.3 + 0.1im, -0.5 + 0.8im]
+            o_naive = zeros(ComplexF64, 2); o_eff = zeros(ComplexF64, 2)
+            ws_naive = _FilonDynWS(2); ws_eff = _FilonEfficientWS(2)
+            _apply_M!(o_naive, x, ops, wpd.WE, wpd.freqs, ws_naive, vs)
+            _apply_M_efficient!(o_eff, x, ops, wpd.WE, wpd.freqs, ws_eff, vs)
+            @test maximum(abs.(o_naive .- o_eff)) < 1e-13
+        end
+    end
+
+    # No per-step allocation, matching the naive dynamic apply's discipline.
+    @testset "allocation-free" begin
+        for s in 0:2
+            vs = Val(s)
+            wpd = _dynamic_weights(prob.co_dynamic, prob.frequencies, Δt, vs)
+            ops = _opderivs(prob.co_dynamic, 0.0, vs)
+            ws = _FilonEfficientWS(2)
+            x = Vector(prob.ψ0); out = zeros(ComplexF64, 2)
+            applyM() = _apply_M_efficient!(out, x, ops, wpd.WE, wpd.freqs, ws, vs)
+            applyM()
+            @test (@allocated applyM()) == 0
+        end
+    end
+
+    # End-to-end the efficient solve must match the naive dynamic solve and the
+    # static result.
+    @testset "end-to-end agreement" begin
+        ns = 50
+        for s in 0:2
+            naive = filon_solve_hardcoded(prob.co_dynamic, prob.ψ0, prob.frequencies,
+                                          T / ns, ns, s; save_final_only = true)
+            eff = filon_solve_hardcoded(prob.co_dynamic, prob.ψ0, prob.frequencies,
+                                        T / ns, ns, s; save_final_only = true, efficient = true)
+            stat = filon_solve_hardcoded(prob.co_static, prob.ψ0, prob.frequencies,
+                                         T / ns, ns, s; save_final_only = true)
+            @test maximum(abs.(eff .- naive)) < 1e-11
+            @test maximum(abs.(eff .- stat)) < 1e-11
+        end
+    end
+
+    # Single-step API honors the efficient flag and matches the driver.
+    @testset "single step" begin
+        for s in 0:2
+            wpd = filon_weight_phases(prob.co_dynamic, prob.frequencies, Δt, s)
+            ref = filon_solve_hardcoded(prob.co_dynamic, prob.ψ0, prob.frequencies, Δt, 1, s)
+            ψ1 = filon_timestep_hardcoded(prob.co_dynamic, Vector(prob.ψ0), 0.0, Δt, wpd;
+                                          efficient = true)
+            @test maximum(abs.(ψ1 .- ref[:, end])) < 1e-11
+        end
+    end
+
+    # efficient=true is dynamic-only; pairing it with the static variant throws.
+    @testset "fail-fast on static variant" begin
+        @test_throws ArgumentError filon_solve_hardcoded(prob.co_static, prob.ψ0,
+            prob.frequencies, 0.1, 10, 2; efficient = true)
+    end
 end

@@ -293,6 +293,91 @@ end
 end
 
 # -----------------------------------------------------------------------------
+# DYNAMIC step, EFFICIENT ordering — matrix-free apply of the propagator's
+# bracketed sum using Appendix A's "second ordering"
+#
+#   M^s = Σ_{i=0}^s A^{(i)} Σ_{j=i}^s C(j,i) W^s_j F_{j-i},
+#
+# which is algebraically identical to the naive Σ_j Σ_k form used by _apply_M!
+# above, but applies each A^{(i)} only once (to the output of the inner sum) and
+# computes each envelope-derivative vector F_m x only once.  Writing
+# F_0 x = x, F_1 x = (A - iΩ)x, F_2 x = (Ȧ + A² - Ω² - 2iΩA)x, the expansions are
+#
+#   s=0:  M x = A (W_0 x)
+#   s=1:  M x = A (W_0 x + W_1 F_1 x) + Ȧ (W_1 x)
+#   s=2:  M x = A (W_0 x + W_1 F_1 x + W_2 F_2 x)
+#               + Ȧ (W_1 x + 2 W_2 F_1 x) + Ä (W_2 x).
+#
+# Matvec counts per apply: s=1 → 2×A, 1×Ȧ (vs 3×A in the naive form); s=2 →
+# 3×A, 2×Ȧ, 1×Ä = 6 (vs 9).  Like _apply_M!, every step uses only mul! and
+# broadcasts into the preallocated workspace, so it never allocates.
+# -----------------------------------------------------------------------------
+
+# Scratch buffers for the efficient apply (separate from _FilonDynWS so the old
+# path is untouched).  g1, g2 hold F_1 x, F_2 x; Ax holds A x then A(A x); inner
+# is the inner-sum accumulator fed to each A^{(i)} mul!; Mψ and rhs are used by
+# the timestepping loop.
+struct _FilonEfficientWS{V<:AbstractVector}
+    g1::V
+    g2::V
+    Ax::V
+    inner::V
+    Mψ::V
+    rhs::V
+end
+_FilonEfficientWS(N::Integer) =
+    _FilonEfficientWS(ntuple(_ -> zeros(ComplexF64, N), Val(6))...)
+
+@inline function _apply_M_efficient!(out, x, ops, W, freqs, ws, ::Val{0})
+    @. ws.inner = W[1] * x                          # W_0 F_0 x  (F_0 = I)
+    mul!(out, ops[1], ws.inner)                     # A (…)
+    return out
+end
+
+@inline function _apply_M_efficient!(out, x, ops, W, freqs, ws, ::Val{1})
+    A, dA = ops
+    mul!(ws.Ax, A, x)
+    @. ws.g1 = ws.Ax - im * freqs * x               # F_1 x = (A - iΩ) x
+    @. ws.inner = W[1] * x + W[2] * ws.g1           # i=0 inner sum
+    mul!(out, A, ws.inner)                          # A (W_0 F_0 x + W_1 F_1 x)
+    @. ws.inner = W[2] * x                          # i=1 inner sum
+    mul!(out, dA, ws.inner, 1, 1)                   # + Ȧ (W_1 F_0 x)
+    return out
+end
+
+@inline function _apply_M_efficient!(out, x, ops, W, freqs, ws, ::Val{2})
+    A, dA, ddA = ops
+    mul!(ws.Ax, A, x)                               # A x
+    @. ws.g1 = ws.Ax - im * freqs * x               # F_1 x = (A - iΩ) x
+    mul!(ws.g2, A, ws.Ax)                           # A² x
+    @. ws.g2 = ws.g2 - (freqs^2) * x - 2im * freqs * ws.Ax
+    mul!(ws.g2, dA, x, 1, 1)                         # F_2 x = Ȧx + A²x - Ω²x - 2iΩAx
+    @. ws.inner = W[1] * x + W[2] * ws.g1 + W[3] * ws.g2
+    mul!(out, A, ws.inner)                          # A (W_0 F_0 x + W_1 F_1 x + W_2 F_2 x)
+    @. ws.inner = W[2] * x + 2 * W[3] * ws.g1
+    mul!(out, dA, ws.inner, 1, 1)                   # + Ȧ (W_1 F_0 x + 2 W_2 F_1 x)
+    @. ws.inner = W[3] * x
+    mul!(out, ddA, ws.inner, 1, 1)                  # + Ä (W_2 F_0 x)
+    return out
+end
+
+# Callable wrapped once in a LinearMap: x ↦ S_I x = x - M^s_I x, efficient form.
+# Mirrors _ImplicitApply; `ops` is refreshed in place each timestep so the same
+# LinearMap and GMRES workspace are reused.
+mutable struct _ImplicitApplyEfficient{S,OT,WT,FT,WS}
+    ops::OT
+    W::WT
+    freqs::FT
+    ws::WS
+end
+
+@inline function (ia::_ImplicitApplyEfficient{S})(out, x) where {S}
+    _apply_M_efficient!(out, x, ia.ops, ia.W, ia.freqs, ia.ws, Val(S))
+    @. out = x - out
+    return out
+end
+
+# -----------------------------------------------------------------------------
 # Saving
 # -----------------------------------------------------------------------------
 
@@ -400,6 +485,56 @@ function _solve_dynamic(co, ψ0, frequencies, Δt, nsteps, ::Val{S}, save_every,
     return save_final_only ? ψ : history
 end
 
+# Efficient-ordering counterpart of _solve_dynamic.  Identical control flow and
+# weight data (DynamicFilonWeights); only the matrix-free apply differs, using
+# _apply_M_efficient!/_ImplicitApplyEfficient and the _FilonEfficientWS buffers.
+function _solve_dynamic_efficient(co, ψ0, frequencies, Δt, nsteps, ::Val{S}, save_every,
+                                  save_final_only, warm_start, atol, rtol, stats) where {S}
+    N = _nstate(co)
+    wp = _dynamic_weights(co, frequencies, Δt, Val(S))
+    ws = _FilonEfficientWS(N)
+    ψ = Vector{ComplexF64}(undef, N)
+    ψ .= ψ0
+
+    A_n = _opderivs(co, zero(Δt), Val(S))
+    A_np1 = _opderivs(co, Δt, Val(S))               # placeholder (fixes the field type)
+    ia = _ImplicitApplyEfficient{S,typeof(A_np1),typeof(wp.WI),typeof(wp.freqs),typeof(ws)}(
+        A_np1, wp.WI, wp.freqs, ws)
+    L = LinearMap{ComplexF64}(ia, N; ismutating = true)
+    kws = Krylov.krylov_workspace(Val(:gmres), L, ws.rhs)
+    _stats_init!(stats, nsteps, true)
+    warned = false
+
+    save_final_only || (save_idx = _save_indices(nsteps, save_every))
+    save_final_only || (history = Matrix{ComplexF64}(undef, N, length(save_idx)))
+    save_final_only || (history[:, 1] .= ψ)
+    col = 2
+
+    @inbounds for n in 1:nsteps
+        t0 = _stats_tick(stats)
+        A_np1 = _opderivs(co, n * Δt, Val(S))
+        # RHS = ψ + M_E ψ   (explicit side applied to the state)
+        _apply_M_efficient!(ws.Mψ, ψ, A_n, wp.WE, wp.freqs, ws, Val(S))
+        @. ws.rhs = ψ + ws.Mψ
+        # Solve  (I - M_I) ψ_{n+1} = RHS   matrix-free with GMRES.
+        ia.ops = A_np1
+        warm_start && Krylov.warm_start!(kws, ψ)
+        Krylov.gmres!(kws, L, ws.rhs; atol = atol, rtol = rtol)
+        ψ .= Krylov.solution(kws)
+        A_n = A_np1
+        _stats_record_dynamic!(stats, t0, kws)
+        if !warned && !Krylov.issolved(kws)
+            warned = true
+            @warn "GMRES did not converge at a Filon timestep; continuing" step = n niters = Krylov.iteration_count(kws) atol rtol
+        end
+        if !save_final_only && col <= length(save_idx) && save_idx[col] == n
+            history[:, col] .= ψ
+            col += 1
+        end
+    end
+    return save_final_only ? ψ : history
+end
+
 # -----------------------------------------------------------------------------
 # Public API
 # -----------------------------------------------------------------------------
@@ -414,7 +549,10 @@ selects the order `s` and the static / dynamic implementation.
 
 The static path (`wp::StaticFilonWeights`) returns an `SVector` and allocates
 nothing; the dynamic path (`wp::DynamicFilonWeights`) returns a `Vector` and uses
-GMRES (the `atol`/`rtol` keywords set its tolerances).
+GMRES (the `atol`/`rtol` keywords set its tolerances).  On the dynamic path,
+`efficient = true` applies the propagator in the reorganized "second ordering"
+of Appendix A (each `A^{(i)}` applied once, each `F_m ψ` computed once), which
+reduces the matrix–vector products per apply while giving the same result.
 
 For many steps, prefer [`filon_solve_hardcoded`](@ref), which reuses the GMRES
 workspace and avoids re-evaluating `A` at shared step boundaries.
@@ -428,15 +566,24 @@ end
 
 function filon_timestep_hardcoded(co::ControlledOperator, ψ, t_n::Real, Δt::Real,
                                   wp::DynamicFilonWeights{S};
-                                  atol::Real = 1e-13, rtol::Real = 1e-13) where {S}
+                                  atol::Real = 1e-13, rtol::Real = 1e-13,
+                                  efficient::Bool = false) where {S}
     N = length(ψ)
-    ws = _FilonDynWS(N)
     A_n = _opderivs(co, t_n, Val(S))
     A_np1 = _opderivs(co, t_n + Δt, Val(S))
-    _apply_M!(ws.Mψ, ψ, A_n, wp.WE, wp.freqs, ws, Val(S))
-    @. ws.rhs = ψ + ws.Mψ
-    ia = _ImplicitApply{S,typeof(A_np1),typeof(wp.WI),typeof(wp.freqs),typeof(ws)}(
-        A_np1, wp.WI, wp.freqs, ws)
+    if efficient
+        ws = _FilonEfficientWS(N)
+        _apply_M_efficient!(ws.Mψ, ψ, A_n, wp.WE, wp.freqs, ws, Val(S))
+        @. ws.rhs = ψ + ws.Mψ
+        ia = _ImplicitApplyEfficient{S,typeof(A_np1),typeof(wp.WI),typeof(wp.freqs),typeof(ws)}(
+            A_np1, wp.WI, wp.freqs, ws)
+    else
+        ws = _FilonDynWS(N)
+        _apply_M!(ws.Mψ, ψ, A_n, wp.WE, wp.freqs, ws, Val(S))
+        @. ws.rhs = ψ + ws.Mψ
+        ia = _ImplicitApply{S,typeof(A_np1),typeof(wp.WI),typeof(wp.freqs),typeof(ws)}(
+            A_np1, wp.WI, wp.freqs, ws)
+    end
     L = LinearMap{ComplexF64}(ia, N; ismutating = true)
     sol, _ = Krylov.gmres(L, ws.rhs; atol = atol, rtol = rtol)
     return sol
@@ -472,6 +619,13 @@ final step if it is not a multiple of `save_every`).
   otherwise takes *many* iterations; in the well-conditioned, few-iteration
   regime typical of a converged solve it is a wash (or slightly slower), which
   is why it defaults off.  Ignored by the static variant (which solves directly).
+- `efficient::Bool = false` — for the dynamic variant, apply the propagator in
+  the reorganized "second ordering" of Appendix A
+  (`Σ_i A^{(i)} Σ_{j≥i} C(j,i) W_j F_{j-i}`), which applies each matrix
+  derivative `A^{(i)}` once and reuses each envelope-derivative vector `F_m ψ`,
+  cutting the matrix–vector products per step (e.g. 6 vs 9 at `s=2`) while
+  returning the same answer.  The per-step apply remains allocation-free.  Only
+  valid for the dynamic variant; combining it with `:static` throws.
 - `stats::Union{Nothing,FilonSolveStats} = nothing` — pass a
   [`FilonSolveStats`](@ref) to collect per-step wall times and (dynamic variant
   only) GMRES iteration counts and convergence flags.  The collector is emptied
@@ -482,7 +636,7 @@ function filon_solve_hardcoded(co::ControlledOperator, ψ0::AbstractVector,
                                s::Integer; save_every::Integer = 1,
                                save_final_only::Bool = false, variant::Symbol = :auto,
                                gmres_atol::Real = 1e-13, gmres_rtol::Real = 1e-13,
-                               warm_start::Bool = false,
+                               warm_start::Bool = false, efficient::Bool = false,
                                stats::Union{Nothing,FilonSolveStats} = nothing)
     0 <= s <= 2 || throw(ArgumentError("hard-coded Filon supports s ∈ {0,1,2}; got s=$s"))
     nsteps >= 1 || throw(ArgumentError("nsteps must be ≥ 1; got $nsteps"))
@@ -494,8 +648,16 @@ function filon_solve_hardcoded(co::ControlledOperator, ψ0::AbstractVector,
         throw(DimensionMismatch("ψ0 has length $(length(ψ0)); expected $(_nstate(co))"))
 
     if _resolve_variant(co, variant) === :static
+        efficient && throw(ArgumentError("efficient=true applies only to the "*
+            "matrix-free dynamic variant; the static variant forms the full "*
+            "propagator matrix, where the reorganization gives no benefit. "*
+            "Pass variant=:dynamic to use it."))
         return _solve_static(co, ψ0, frequencies, Δt, nsteps, Val(Int(s)),
                              save_every, save_final_only, stats)
+    elseif efficient
+        return _solve_dynamic_efficient(co, ψ0, frequencies, Δt, nsteps, Val(Int(s)),
+                             save_every, save_final_only, warm_start, gmres_atol, gmres_rtol,
+                             stats)
     else
         return _solve_dynamic(co, ψ0, frequencies, Δt, nsteps, Val(Int(s)),
                              save_every, save_final_only, warm_start, gmres_atol, gmres_rtol,
