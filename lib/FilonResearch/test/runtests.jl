@@ -35,6 +35,10 @@ end
     include("./test_efficient_controlled_filon.jl")
 end
 
+@testset "Efficient controlled Hermite (ω = 0)" begin
+    include("./test_efficient_controlled_hermite.jl")
+end
+
 @testset "Solve diagnostics (FilonSolveStats)" begin
     include("./test_solve_stats.jl")
 end

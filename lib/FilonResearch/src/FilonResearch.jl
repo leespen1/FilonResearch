@@ -75,4 +75,10 @@ include("efficient_controlled_filon.jl")
 export efficient_controlled_filon_solve, efficient_controlled_filon_weights
 export DynamicEfficientControlledFilonWeights
 
+# Efficient controlled Hermite: the ω = 0 case of the efficient controlled Filon
+# method (per-control-Hamiltonian quadrature, no frequency consideration).
+include("efficient_controlled_hermite.jl")
+export efficient_controlled_hermite_solve, efficient_controlled_hermite_weights
+export DynamicEfficientControlledHermiteWeights
+
 end # module FilonResearch
