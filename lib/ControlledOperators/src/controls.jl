@@ -291,3 +291,69 @@ and the control itself otherwise (its envelope *is* itself, with zero carrier).
 """
 envelope(c::AbstractControl) = c
 envelope(c::CarrierControl) = c.envelope
+
+# ---------------------------------------------------------------------------------------------
+# SumControl
+# ---------------------------------------------------------------------------------------------
+
+"""
+    SumControl(controls...)
+    SumControl(controls::Tuple)
+
+A control equal to the sum of its component controls: `c(t) = Σₗ cₗ(t)`, with every derivative
+likewise the sum of the components' derivatives.  The components are held in a `Tuple` so that
+a heterogeneous mix (e.g. several [`CarrierControl`](@ref)s at different frequencies) stays
+type-stable, and the summing recursion is unrolled at compile time.
+
+This is the natural representation of a single control pulse built from several carrier waves,
+
+    cₖ(t) = Σₗ c̃ₖ,ₗ(t) · e^{i νₖ,ₗ t},
+
+all multiplying the *same* control matrix.  A `SumControl` keeps the individual carriers
+recoverable through [`components`](@ref); the efficient controlled Filon method reaches into the
+components for their separate envelopes and carrier frequencies, while [`derivative`](@ref) of
+the sum supplies the combined coefficient (and its time-derivatives) for the operator's matvec.
+"""
+struct SumControl{T,CC<:Tuple} <: AbstractControl{T}
+    controls::CC
+    function SumControl{T,CC}(controls) where {T,CC<:Tuple}
+        return new{T,CC}(controls)
+    end
+end
+
+function SumControl(controls::Tuple)
+    isempty(controls) && throw(ArgumentError("SumControl needs at least one component control"))
+    all(c -> c isa AbstractControl, controls) ||
+        throw(ArgumentError("SumControl components must all be AbstractControls"))
+    T = promote_type(map(eltype, controls)...)
+    return SumControl{T,typeof(controls)}(controls)
+end
+
+SumControl(controls::AbstractControl...) = SumControl(controls)
+
+# The natural promoted type of the sum is exactly `T`, but we deliberately do *not* assert it:
+# under the Taylor-mode `derivative` fallback `t` may be a `TaylorScalar`, so the realized type
+# differs from the nominal value type while differentiating through `t`.
+@inline function derivative(sc::SumControl, t::Real, d::Derivative)
+    return _sum_derivative(sc.controls, t, d)
+end
+
+@inline function derivative(sc::SumControl, t::Real, d::DerivativeUpTo)
+    return _sum_derivative(sc.controls, t, d)
+end
+
+# Compile-time-unrolled sum over the component tuple (same idea as `_write_coeffs!`): the tuple
+# type encodes its length, so this expands to straight-line additions with no runtime recursion.
+@inline _sum_derivative(controls::Tuple{Any}, t, d) = derivative(controls[1], t, d)
+@inline _sum_derivative(controls::Tuple, t, d) =
+    derivative(first(controls), t, d) + _sum_derivative(Base.tail(controls), t, d)
+
+"""
+    components(control) -> Tuple
+
+The component controls of a [`SumControl`](@ref).  For any other control the "sum" is the
+control itself, so a one-element tuple `(control,)` is returned — letting a method iterate the
+carriers of a control entry uniformly, whether or not it is a sum.
+"""
+components(sc::SumControl) = sc.controls
+components(c::AbstractControl) = (c,)

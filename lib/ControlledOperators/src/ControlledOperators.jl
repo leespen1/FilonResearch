@@ -42,6 +42,7 @@ using StaticArrays
 
 export AbstractControl, ConstantControl, FourierControl, FunctionControl, ScaledControl
 export CarrierControl, carrier_frequency, envelope
+export SumControl, components
 export Derivative, DerivativeUpTo, derivative, erase_type
 export ControlledOperator, Operator, get_controls, evaluate, evaluate!
 export materialize, materialize!

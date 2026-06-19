@@ -99,4 +99,32 @@
         c0 = CarrierControl(ConstantControl(1.0), 0.0)
         @test c0(0.4) == 1.0 + 0.0im
     end
+
+    @testset "SumControl" begin
+        a = FourierControl(0.3, [0.5], [0.2], 1.7)
+        b = CarrierControl(FourierControl(-0.1, [0.4], [0.1], 0.9), 1.3)
+        c = ConstantControl(2.0)
+        s = SumControl(a, b, c)
+        sum_at(t) = a(t) + b(t) + c(t)
+        @test eltype(s) === ComplexF64                       # promotes over real + complex parts
+        @test length(components(s)) == 3
+        @test components(s) === (a, b, c)
+        @test components(a) === (a,)                         # non-sum: itself, one-element tuple
+        @test s(0.4) ≈ sum_at(0.4)
+        # every derivative is the sum of the components' derivatives
+        for N in 0:3
+            direct = derivative(a, 0.4, Derivative{N}()) + derivative(b, 0.4, Derivative{N}()) +
+                     derivative(c, 0.4, Derivative{N}())
+            @test derivative(s, 0.4, Derivative{N}()) ≈ direct
+        end
+        @test derivative(s, 0.4, DerivativeUpTo{3}()) ≈
+              derivative(a, 0.4, DerivativeUpTo{3}()) .+ derivative(b, 0.4, DerivativeUpTo{3}()) .+
+              derivative(c, 0.4, DerivativeUpTo{3}())
+        @test @inferred(derivative(s, 0.4, Derivative{2}())) isa ComplexF64
+        @test @inferred(derivative(s, 0.4, DerivativeUpTo{2}())) isa SVector{3,ComplexF64}
+        @test count_allocs(c -> derivative(c, 0.4, Derivative{2}()), s) == 0
+        @test count_allocs(c -> derivative(c, 0.4, DerivativeUpTo{2}()), s) == 0
+        # fail-fast on an empty sum
+        @test_throws ArgumentError SumControl()
+    end
 end

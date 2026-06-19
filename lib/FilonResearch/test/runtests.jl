@@ -31,6 +31,10 @@ end
     include("./test_controlled_filon.jl")
 end
 
+@testset "Efficient controlled Filon (Appendix B)" begin
+    include("./test_efficient_controlled_filon.jl")
+end
+
 @testset "Solve diagnostics (FilonSolveStats)" begin
     include("./test_solve_stats.jl")
 end

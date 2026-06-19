@@ -309,6 +309,72 @@ function qgd_to_controlled_filon_operator(
 end
 
 """
+    qgd_to_efficient_controlled_filon_operator(prob, controls, pcof) -> ControlledOperator
+
+Like [`qgd_to_controlled_filon_operator`](@ref), but grouped for
+`efficient_controlled_filon_solve`: each control contributes its two constant
+matrices M⁺ₖ = -i/2 (Sₖ + Aₖ), M⁻ₖ = -i/2 (Sₖ - Aₖ) **once**, paired with a
+[`SumControl`](@ref) gathering all of that control's carriers,
+
+    M⁺ₖ ← Σ_f Eₖ,_f(t) e^{+i ω_{k,f} t},   M⁻ₖ ← Σ_f conj(Eₖ,_f(t)) e^{-i ω_{k,f} t},
+
+with envelope Eₖ,_f = pₖ,_f + i qₖ,_f from the f-th carrier's B-spline.  The realized
+A(t) is identical to [`qgd_to_controlled_filon_operator`](@ref), only the carriers
+sharing a matrix are gathered under one entry instead of split across duplicated
+matrices.  This is what lets the efficient method apply each matrix once per step
+regardless of the number of carriers: the operator has `1 + 2·ncontrol` matrices,
+not `1 + 2·ncontrol·Nfreq`.
+
+Each `controls[k]` must be a QuantumGateDesign `CarrierControl`.  Component matrices
+keep the QGD operators' storage format (sparse stays `SparseMatrixCSC`).
+"""
+function qgd_to_efficient_controlled_filon_operator(
+    prob::QuantumGateDesign.SchrodingerProb, controls, pcof::AbstractVector{<: Real},
+)
+    drift = -im .* (prob.system_sym .+ (im .* prob.system_asym))
+    matrices = typeof(drift)[drift]
+    ctrls = Any[ConstantControl(1.0)]
+
+    for (k, control) in enumerate(controls)
+        control isa QuantumGateDesign.CarrierControl || throw(ArgumentError(
+            "controlled-Filon adapter expects QuantumGateDesign.CarrierControls; " *
+            "control $k is a $(typeof(control))"))
+
+        pcof_k = QuantumGateDesign.get_control_vector_slice(pcof, controls, k)
+        base = control.base_control
+        nbase = base.N_coeff
+
+        Sk = ComplexF64.(prob.sym_operators[k])
+        Ak = ComplexF64.(prob.asym_operators[k])
+        Mplus  = (-im / 2) .* (Sk .+ Ak)
+        Mminus = (-im / 2) .* (Sk .- Ak)
+
+        # Gather every carrier of this control into one SumControl per matrix, so
+        # M⁺ₖ / M⁻ₖ each appear only once in the operator.
+        plus_carriers = FilonResearch.CarrierControl[]
+        minus_carriers = FilonResearch.CarrierControl[]
+        for (f, ωf) in enumerate(control.carrier_frequencies)
+            slice_f = view(pcof_k, (f - 1) * nbase + 1 : f * nbase)
+            env = FunctionControl{ComplexF64}(
+                (t, n) -> eval_p_derivative(base, t, slice_f, n) +
+                          im * eval_q_derivative(base, t, slice_f, n))
+            conj_env = FunctionControl{ComplexF64}(
+                (t, n) -> eval_p_derivative(base, t, slice_f, n) -
+                          im * eval_q_derivative(base, t, slice_f, n))
+            push!(plus_carriers, FilonResearch.CarrierControl(env, ωf))
+            push!(minus_carriers, FilonResearch.CarrierControl(conj_env, -ωf))
+        end
+
+        push!(matrices, Mplus)
+        push!(ctrls, FilonResearch.SumControl(Tuple(plus_carriers)))
+        push!(matrices, Mminus)
+        push!(ctrls, FilonResearch.SumControl(Tuple(minus_carriers)))
+    end
+
+    return ControlledOperator(Tuple(ctrls), matrices)
+end
+
+"""
     eval_forward_complex_history(qgd_prob, controls, pcof, initial_condition;
                                  order, nsteps, saveEveryNsteps) -> Matrix{ComplexF64}
 

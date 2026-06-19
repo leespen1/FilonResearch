@@ -16,6 +16,7 @@ using ControlledOperators
 # Polynomials.derivative is unused in this package, so no longer imported above.
 export AbstractControl, ConstantControl, FourierControl, FunctionControl, ScaledControl
 export CarrierControl, carrier_frequency, envelope
+export SumControl, components
 export Derivative, DerivativeUpTo, derivative, erase_type
 export ControlledOperator, Operator, get_controls, evaluate, evaluate!
 export materialize, materialize!
@@ -67,5 +68,11 @@ export StaticHermiteWeights, DynamicHermiteWeights
 include("controlled_filon.jl")
 export controlled_filon_solve, controlled_filon_weights
 export StaticControlledFilonWeights, DynamicControlledFilonWeights
+
+# Efficient (generator-form) controlled Filon: dense matvecs scale with the
+# number of distinct matrices, not the number of carriers (Appendix B).
+include("efficient_controlled_filon.jl")
+export efficient_controlled_filon_solve, efficient_controlled_filon_weights
+export DynamicEfficientControlledFilonWeights
 
 end # module FilonResearch
