@@ -213,24 +213,30 @@ symmetric control operator and Aₖ the k-th antisymmetric one,
 where pₖ, qₖ (and their derivatives) come from the QGD controls.  The matrices
 are stored as a dynamic `Vector` (the system is large) and the controls as a
 heterogeneous `Tuple` (type-stable drift-plus-controls layout).
+
+The component matrices keep the storage format of the QGD operators rather than
+being densified: for the sparse Hamiltonians built by `dispersive_qudits_problem`
+this leaves them `SparseMatrixCSC`, so each `Operator` matvec is a sparse
+product.  (The CNOT3 Hamiltonians are only a few percent dense, and the sparse
+matvec dominates the Filon solve time.)
 """
 function qgd_to_controlled_operator(
     prob::QuantumGateDesign.SchrodingerProb, controls, pcof::AbstractVector{<: Real},
 )
-    Hsys = prob.system_sym .+ (im .* prob.system_asym)
-    matrices = Matrix{ComplexF64}[Matrix{ComplexF64}(-im .* Hsys)]
+    # -i Hₛ = -i(system_sym + i·system_asym); broadcasting preserves the operator
+    # storage (sparse stays sparse), so do not wrap in `Matrix`.
+    drift = -im .* (prob.system_sym .+ (im .* prob.system_asym))
+    matrices = typeof(drift)[drift]
     ctrls = Any[ConstantControl(1.0)]
 
     for (k, control) in enumerate(controls)
         pcof_k = QuantumGateDesign.get_control_vector_slice(pcof, controls, k)
-        Sk = Matrix{ComplexF64}(prob.sym_operators[k])
-        Ak = Matrix{ComplexF64}(prob.asym_operators[k])
 
-        push!(matrices, -im .* Sk)
+        push!(matrices, -im .* prob.sym_operators[k])
         push!(ctrls, FunctionControl{Float64}(
             (t, n) -> eval_p_derivative(control, t, pcof_k, n)))
 
-        push!(matrices, Ak)
+        push!(matrices, ComplexF64.(prob.asym_operators[k]))
         push!(ctrls, FunctionControl{Float64}(
             (t, n) -> eval_q_derivative(control, t, pcof_k, n)))
     end
@@ -255,12 +261,18 @@ the same A(t) as [`qgd_to_controlled_operator`](@ref), only regrouped.
 
 Each `controls[k]` must be a QuantumGateDesign `CarrierControl` (it exposes
 `carrier_frequencies` and `base_control`).
+
+As in [`qgd_to_controlled_operator`](@ref), the component matrices keep the QGD
+operators' storage format (sparse stays `SparseMatrixCSC`) rather than being
+densified, so each `Operator` matvec is a sparse product.
 """
 function qgd_to_controlled_filon_operator(
     prob::QuantumGateDesign.SchrodingerProb, controls, pcof::AbstractVector{<: Real},
 )
-    Hsys = prob.system_sym .+ (im .* prob.system_asym)
-    matrices = Matrix{ComplexF64}[Matrix{ComplexF64}(-im .* Hsys)]
+    # -i Hₛ, keeping the operator storage (sparse stays sparse); see
+    # qgd_to_controlled_operator.
+    drift = -im .* (prob.system_sym .+ (im .* prob.system_asym))
+    matrices = typeof(drift)[drift]
     ctrls = Any[ConstantControl(1.0)]
 
     for (k, control) in enumerate(controls)
@@ -272,8 +284,8 @@ function qgd_to_controlled_filon_operator(
         base = control.base_control
         nbase = base.N_coeff
 
-        Sk = Matrix{ComplexF64}(prob.sym_operators[k])
-        Ak = Matrix{ComplexF64}(prob.asym_operators[k])
+        Sk = ComplexF64.(prob.sym_operators[k])
+        Ak = ComplexF64.(prob.asym_operators[k])
         Mplus  = (-im / 2) .* (Sk .+ Ak)
         Mminus = (-im / 2) .* (Sk .- Ak)
 
