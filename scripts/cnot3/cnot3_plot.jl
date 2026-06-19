@@ -78,9 +78,11 @@ println("initialCondition = $(init), frame = $(frame)")
 println("Loaded $(nrow(df)) runs: ",
         join(["$(METHOD_LABELS[m])×$(count(==(m), df.method))" for m in unique(df.method)], ", "))
 
-# Finest-run reference: the most-refined solution overall (largest nsteps, ties
-# broken by the highest order s).  Its final-time state is the ground truth.
-sort!(df, [:nsteps, :s], rev = true)
+# Finest-run reference: the deepest run of the *highest order* present (order
+# first, then nsteps).  Ranking by nsteps alone can select a low-order run —
+# e.g. an order-2 series pushed to 2^24 — whose own error is many digits above
+# the high-order floors it would be measuring.
+sort!(df, [:s, :nsteps], rev = true)
 ref = first(df)
 Tmax = ref.Tmax
 uref = ref.history[:, end]
@@ -153,6 +155,10 @@ function make_convergence_figure(df, methods; basename = "cnot3_convergence_$(fr
         scatterlines!(ax, n, e; color = METHOD_COLORS[m], marker = ORDER_MARKERS[si],
                       markersize = 9, linewidth = 1.5)
     end
+
+    # The guide lines extend far below any data; without explicit limits they
+    # drag the y-axis down by many decades and squash the curves.
+    ylims!(ax, ERROR_WINDOW[1] / 10, ERROR_WINDOW[2] * 10)
 
     method_entries = [LineElement(color = METHOD_COLORS[m], linewidth = 2) for m in methods]
     order_entries  = [MarkerElement(marker = ORDER_MARKERS[j], color = :black, markersize = 9)
