@@ -23,6 +23,10 @@ end
     include("./test_hardcoded_filon.jl")
 end
 
+@testset "Hard-coded Hermite (ControlledOperator)" begin
+    include("./test_hardcoded_hermite.jl")
+end
+
 @testset "Controlled Filon (Appendix B)" begin
     include("./test_controlled_filon.jl")
 end

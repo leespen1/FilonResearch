@@ -58,6 +58,11 @@ include("hardcoded_filon.jl")
 export filon_solve_hardcoded, filon_timestep_hardcoded, filon_weight_phases
 export StaticFilonWeights, DynamicFilonWeights
 
+# Hard-coded Hermite method (the ω = 0 case of the Filon method), same interface.
+include("hardcoded_hermite.jl")
+export hermite_solve_hardcoded, hermite_timestep_hardcoded, hermite_weight_phases
+export StaticHermiteWeights, DynamicHermiteWeights
+
 # Controlled Filon method (Appendix B, s = 0,1,2): per-control carrier-wave ansatz.
 include("controlled_filon.jl")
 export controlled_filon_solve, controlled_filon_weights
