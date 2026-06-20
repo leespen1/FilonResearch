@@ -2,7 +2,7 @@ module FilonResearch
 
 import Polynomials
 import Polynomials: Polynomial
-import LinearAlgebra: dot, mul!, I, Diagonal, cond, eigvals
+import LinearAlgebra: dot, mul!, axpy!, I, Diagonal, cond, eigvals
 import LinearMaps: LinearMap
 import IterativeSolvers: gmres
 import Krylov

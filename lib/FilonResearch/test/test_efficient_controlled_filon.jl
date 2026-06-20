@@ -93,7 +93,7 @@ end
 # =============================================================================
 @testset "Multi-carrier convergence orders" begin
     prob = multicarrier_problem()
-    # Reference: a fine-grid regular Filon solve on the full carrier-bearing 𝒜(t).
+    # Reference: a fine-grid regular Filon solve on the full carrier-bearing A(t).
     Af(t)   = materialize(evaluate(prob.co_grouped, t, Derivative{0}()))
     dAf(t)  = materialize(evaluate(prob.co_grouped, t, Derivative{1}()))
     ddAf(t) = materialize(evaluate(prob.co_grouped, t, Derivative{2}()))

@@ -17,13 +17,13 @@
 #
 # Each step solves  S^s_I ψ_{n+1} = S^s_E ψ_n  with (Appendix B)
 #
-#   S^s_□ = I ± Σ_k φ_{□,k} A_k [ Σ_j Σ_m C(j,m) c̃_k^{(j-m)} W^s_{□,j,k} F_m ]
+#   S^s_* = I ± Σ_k φ_{*,k} A_k [ Σ_j Σ_m C(j,m) c̃_k^{(j-m)} W^s_{*,j,k} F_m ]
 #
 # evaluated at t_n (explicit, +) / t_{n+1} (implicit, −), where
-#   φ_{□,k} = e^{i ω_{c,k} t̄_n},   t̄_n = t_n + Δt/2   (same midpoint phase both sides),
-#   F_0 = I,  F_1 = 𝒜 - iΩ,  F_2 = -Ω² - 2iΩ𝒜 + 𝒜̇ + 𝒜²   (𝒜 = full A(t), with carriers),
+#   φ_{*,k} = e^{i ω_{c,k} t̄_n},   t̄_n = t_n + Δt/2   (same midpoint phase both sides),
+#   F_0 = I,  F_1 = A - iΩ,  F_2 = -Ω² - 2iΩA + Adot + A²   (A = full A(t), with carriers),
 #   Ω = diag(ω) (ansatz frequencies), and the per-control weight-phase diagonals are
-#   W^s_{□,j,k} = (Δt/2)^{j+1} diag( e^{∓i ω̂_m} b^{[-1,1],s}_{□,j}((ω_m + ω_{c,k}) Δt/2) ),
+#   W^s_{*,j,k} = (Δt/2)^{j+1} diag( e^{∓i ω̂_m} b^{[-1,1],s}_{*,j}((ω_m + ω_{c,k}) Δt/2) ),
 #   ω̂_m = ω_m Δt/2   (note: the PHASE uses the unmodified ω_m; the weight uses ω_m+ω_{c,k}).
 #
 # When every ω_{c,k} = 0 this reduces exactly to the regular Filon method
@@ -37,7 +37,7 @@
 # The envelope-only operator: same matrices, controls replaced by their envelopes.
 # `evaluate(envco, t, Derivative{j})` then yields the per-control envelope
 # derivatives c̃_k^{(j)}(t) as its coefficient vector, while `evaluate(co, …)`
-# (carriers intact) yields 𝒜⁽ᵐ⁾.
+# (carriers intact) yields A⁽ᵐ⁾.
 _envelope_operator(co::ControlledOperator) =
     ControlledOperator(map(envelope, co.controls), co.matrices)
 
@@ -145,7 +145,7 @@ function controlled_filon_weights(co::ControlledOperator, frequencies::AbstractV
 end
 
 # -----------------------------------------------------------------------------
-# STATIC — accumulate  Σ_k φ_k A_k bracket_k  (so S_□ = I ± acc), then solve
+# STATIC — accumulate  Σ_k φ_k A_k bracket_k  (so S_* = I ± acc), then solve
 # -----------------------------------------------------------------------------
 
 @inline function _controlled_acc_static(co, envco, t, W, Ω, ωc, mid, ::Val{0}, ::Val{N}) where {N}
@@ -159,8 +159,8 @@ end
 end
 
 @inline function _controlled_acc_static(co, envco, t, W, Ω, ωc, mid, ::Val{1}, ::Val{N}) where {N}
-    𝒜 = materialize(evaluate(co, t, Derivative{0}()))
-    F1 = 𝒜 - im * Ω
+    A = materialize(evaluate(co, t, Derivative{0}()))
+    F1 = A - im * Ω
     c0, c1, _ = _envelope_coeffs(envco, t, Val(1))
     mats = co.matrices
     acc = zero(SMatrix{N,N,ComplexF64})
@@ -173,10 +173,10 @@ end
 end
 
 @inline function _controlled_acc_static(co, envco, t, W, Ω, ωc, mid, ::Val{2}, ::Val{N}) where {N}
-    𝒜 = materialize(evaluate(co, t, Derivative{0}()))
-    𝒜d = materialize(evaluate(co, t, Derivative{1}()))
-    F1 = 𝒜 - im * Ω
-    F2 = 𝒜d + 𝒜^2 - Ω^2 - 2im * (Ω * 𝒜)
+    A = materialize(evaluate(co, t, Derivative{0}()))
+    Ad = materialize(evaluate(co, t, Derivative{1}()))
+    F1 = A - im * Ω
+    F2 = Ad + A^2 - Ω^2 - 2im * (Ω * A)
     c0, c1, c2 = _envelope_coeffs(envco, t, Val(2))
     mats = co.matrices
     acc = zero(SMatrix{N,N,ComplexF64})
@@ -198,11 +198,11 @@ end
 end
 
 # -----------------------------------------------------------------------------
-# DYNAMIC — matrix-free application of  M_□  (so S_□ x = x ± M_□ x)
+# DYNAMIC — matrix-free application of  M_*  (so S_* x = x ± M_* x)
 # -----------------------------------------------------------------------------
 
 struct _ControlledDynWS{V<:AbstractVector,P<:AbstractVector}
-    𝒜x::V
+    Ax::V
     F1x::V
     F2x::V
     t1::V
@@ -216,19 +216,19 @@ end
 _ControlledDynWS(N::Integer, ncontrol::Integer) = _ControlledDynWS(
     (zeros(ComplexF64, N) for _ in 1:9)..., zeros(ComplexF64, ncontrol))
 
-# out ← M x = Σ_k φ_k A_k bracket_k x.  `𝒜op`/`𝒜dop` are 𝒜(t), 𝒜̇(t) as Operators;
+# out ← M x = Σ_k φ_k A_k bracket_k x.  `Aop`/`Adop` are A(t), Adot(t) as Operators;
 # `mats` are the constant A_k; `W` the per-control weight vectors; `cc` the envelope
 # coefficients (c0,c1,c2); `φ` the per-control midpoint phases; `freqs` the ansatz ω.
-function _controlled_apply_M!(out, x, mats, 𝒜op, 𝒜dop, W, cc, φ, freqs, ws, ::Val{S}) where {S}
+function _controlled_apply_M!(out, x, mats, Aop, Adop, W, cc, φ, freqs, ws, ::Val{S}) where {S}
     fill!(out, zero(eltype(out)))
     if S >= 1
-        mul!(ws.𝒜x, 𝒜op, x)
-        @. ws.F1x = ws.𝒜x - im * freqs * x                       # (𝒜 - iΩ) x
+        mul!(ws.Ax, Aop, x)
+        @. ws.F1x = ws.Ax - im * freqs * x                       # (A - iΩ) x
     end
     if S >= 2
-        mul!(ws.t1, 𝒜op, ws.𝒜x)                                  # 𝒜(𝒜x)
-        mul!(ws.t2, 𝒜dop, x)                                     # 𝒜̇ x
-        @. ws.F2x = ws.t2 + ws.t1 - (freqs^2) * x - 2im * freqs * ws.𝒜x
+        mul!(ws.t1, Aop, ws.Ax)                                  # A(Ax)
+        mul!(ws.t2, Adop, x)                                     # Adot x
+        @. ws.F2x = ws.t2 + ws.t1 - (freqs^2) * x - 2im * freqs * ws.Ax
     end
     c0, c1, c2 = cc
     @inbounds for k in eachindex(mats)
@@ -248,14 +248,14 @@ function _controlled_apply_M!(out, x, mats, 𝒜op, 𝒜dop, W, cc, φ, freqs, w
 end
 
 # Callable applying x ↦ S_I x = x - M_I x, wrapped once in a LinearMap.  The
-# implicit-side operators (𝒜op, 𝒜dop) and envelope coefficients (c0,c1,c2) are
+# implicit-side operators (Aop, Adop) and envelope coefficients (c0,c1,c2) are
 # refreshed in place each step (their types are fixed across steps), so the same
 # LinearMap and GMRES workspace are reused — the loop allocates nothing.  The
 # per-control phases live in `ws.φ` (also refreshed in place each step).
 mutable struct _ControlledImplicit{S,MT,OT,WT,CT,FT,WST}
     mats::MT
-    𝒜op::OT
-    𝒜dop::OT
+    Aop::OT
+    Adop::OT
     W::WT
     c0::CT
     c1::CT
@@ -265,7 +265,7 @@ mutable struct _ControlledImplicit{S,MT,OT,WT,CT,FT,WST}
 end
 
 @inline function (ia::_ControlledImplicit{S})(out, x) where {S}
-    _controlled_apply_M!(out, x, ia.mats, ia.𝒜op, ia.𝒜dop, ia.W,
+    _controlled_apply_M!(out, x, ia.mats, ia.Aop, ia.Adop, ia.W,
                          (ia.c0, ia.c1, ia.c2), ia.ws.φ, ia.freqs, ia.ws, Val(S))
     @. out = x - out
     return out
@@ -283,11 +283,11 @@ function _controlled_solve_dynamic(co, ψ0, frequencies, Δt, nsteps, ::Val{S}, 
     ψ = Vector{ComplexF64}(undef, N); ψ .= ψ0
 
     # Reusable implicit operator + LinearMap + GMRES workspace (built once).
-    𝒜op0 = evaluate(co, Δt, Derivative{0}())
-    𝒜dop0 = S >= 2 ? evaluate(co, Δt, Derivative{1}()) : 𝒜op0
+    Aop0 = evaluate(co, Δt, Derivative{0}())
+    Adop0 = S >= 2 ? evaluate(co, Δt, Derivative{1}()) : Aop0
     c00, c10, c20 = _envelope_coeffs(envco, Δt, Val(S))
-    ia = _ControlledImplicit{S,typeof(mats),typeof(𝒜op0),typeof(wp.WI),typeof(c00),
-                             typeof(freqs),typeof(ws)}(mats, 𝒜op0, 𝒜dop0, wp.WI, c00, c10, c20,
+    ia = _ControlledImplicit{S,typeof(mats),typeof(Aop0),typeof(wp.WI),typeof(c00),
+                             typeof(freqs),typeof(ws)}(mats, Aop0, Adop0, wp.WI, c00, c10, c20,
                                                        freqs, ws)
     L = LinearMap{ComplexF64}(ia, N; ismutating = true)
     kws = Krylov.krylov_workspace(Val(:gmres), L, ws.rhs)
@@ -304,14 +304,14 @@ function _controlled_solve_dynamic(co, ψ0, frequencies, Δt, nsteps, ::Val{S}, 
         t_n = (n - 1) * Δt; t_np1 = n * Δt; mid = t_n + Δt / 2
         @. ws.φ = cis(wp.ωc * mid)
         # explicit side:  rhs = ψ + M_E ψ   (applied to the state, in place)
-        𝒜E = evaluate(co, t_n, Derivative{0}())
-        𝒜dE = S >= 2 ? evaluate(co, t_n, Derivative{1}()) : 𝒜E
+        AE = evaluate(co, t_n, Derivative{0}())
+        AdE = S >= 2 ? evaluate(co, t_n, Derivative{1}()) : AE
         ccE = _envelope_coeffs(envco, t_n, Val(S))
-        _controlled_apply_M!(ws.Mψ, ψ, mats, 𝒜E, 𝒜dE, wp.WE, ccE, ws.φ, freqs, ws, Val(S))
+        _controlled_apply_M!(ws.Mψ, ψ, mats, AE, AdE, wp.WE, ccE, ws.φ, freqs, ws, Val(S))
         @. ws.rhs = ψ + ws.Mψ
         # implicit side:  refresh ia, solve (I - M_I) ψ_{n+1} = rhs matrix-free
-        ia.𝒜op = evaluate(co, t_np1, Derivative{0}())
-        ia.𝒜dop = S >= 2 ? evaluate(co, t_np1, Derivative{1}()) : ia.𝒜op
+        ia.Aop = evaluate(co, t_np1, Derivative{0}())
+        ia.Adop = S >= 2 ? evaluate(co, t_np1, Derivative{1}()) : ia.Aop
         c0I, c1I, c2I = _envelope_coeffs(envco, t_np1, Val(S))
         ia.c0 = c0I; ia.c1 = c1I; ia.c2 = c2I
         Krylov.gmres!(kws, L, ws.rhs; atol = atol, rtol = rtol)

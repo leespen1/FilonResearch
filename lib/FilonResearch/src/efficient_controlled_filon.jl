@@ -8,17 +8,19 @@
 # `controlled_filon_solve`, but reorganized into the efficient form of Appendix B:
 # every carrier sharing a matrix A_k is gathered into a single diagonal generator
 #
-#   G^s_{□,k,m}(t) = Σ_l φ_{□,k,l}(t) Σ_{j=m}^s C(j,m) c̃_{k,l}^{(j-m)}(t) W^s_{□,j,k,l},
+#   G^s_{*,k,m}(t) = Σ_l φ_{*,k,l}(t) Σ_{j=m}^s C(j,m) c̃_{k,l}^{(j-m)}(t) W^s_{*,j,k,l},
 #
 # so that the timestep matrices
 #
-#   S^s_□ = I ± Σ_k A_k Σ_{m=0}^s [ G^s_{□,k,m} F_m ]_t           (□ = E at t_n, I at t_{n+1})
+#   S^s_* = I ± Σ_k A_k Σ_{m=0}^s [ G^s_{*,k,m} F_m ]_t           (* = E at t_n, I at t_{n+1})
 #
-# apply each *distinct* matrix A_k only once in the outer sum (plus the shared F_m
-# applications), with the F_m ψ computed once and reused:
-#   F_0 = I,  F_1 = 𝒜 - iΩ,  F_2 = 𝒜̇ + 𝒜² - Ω² - 2iΩ𝒜   (𝒜 = full A(t), Ω = diag(ω)),
-#   φ_{□,k,l}(t) = e^{i ν_{k,l}(t ± Δt/2)} = e^{i ν_{k,l} t̄_n}  (same midpoint phase both sides),
-#   W^s_{□,j,k,l} = (Δt/2)^{j+1} diag( e^{∓i ω̂_m} b^{[-1,1],s}_{□,j}((ω_m + ν_{k,l}) Δt/2) ).
+# apply each *distinct* matrix A_k only once in the outer sum, plus s applications
+# while building the shared F_m ψ (one onto each of ψ^{(0)},…,ψ^{(s-1)}; the
+# per-matrix products A_k x are retained so Ax and Adotx share them) — s+1 in total.
+# The F_m ψ are computed once and reused:
+#   F_0 = I,  F_1 = A - iΩ,  F_2 = Adot + A² - Ω² - 2iΩA   (A = full A(t), Ω = diag(ω)),
+#   φ_{*,k,l}(t) = e^{i ν_{k,l}(t ± Δt/2)} = e^{i ν_{k,l} t̄_n}  (same midpoint phase both sides),
+#   W^s_{*,j,k,l} = (Δt/2)^{j+1} diag( e^{∓i ω̂_m} b^{[-1,1],s}_{*,j}((ω_m + ν_{k,l}) Δt/2) ).
 #
 # The number of dense matrix-vector products per step therefore scales with the
 # number of distinct matrices A_k, NOT with the number of carriers — the whole
@@ -123,11 +125,11 @@ function efficient_controlled_filon_weights(co::ControlledOperator, frequencies:
 end
 
 # -----------------------------------------------------------------------------
-# DYNAMIC — matrix-free application of  M_□  (so S_□ x = x ± M_□ x)
+# DYNAMIC — matrix-free application of  M_*  (so S_* x = x ± M_* x)
 # -----------------------------------------------------------------------------
 
-struct _EffControlledDynWS{V<:AbstractVector}
-    𝒜x::V
+struct _EffControlledDynWS{V<:AbstractVector,P}
+    Ax::V
     F1x::V
     F2x::V
     t1::V
@@ -136,25 +138,56 @@ struct _EffControlledDynWS{V<:AbstractVector}
     Akbk::V
     Mψ::V
     rhs::V
+    Px::P       # nmat per-matrix products A_k x, retained so Ax and Adotx share them
 end
-_EffControlledDynWS(N::Integer) = _EffControlledDynWS(ntuple(_ -> zeros(ComplexF64, N), Val(9))...)
+function _EffControlledDynWS(N::Integer, nmat::Integer)
+    return _EffControlledDynWS(ntuple(_ -> zeros(ComplexF64, N), Val(9))...,
+                               [zeros(ComplexF64, N) for _ in 1:nmat])
+end
+
+# Per-matrix products P[k] = mats[k]·x, retained so several combined operators
+# sharing these matrices (here A and Adot) can be assembled by cheap coefficient
+# gathers instead of re-applying every A_k.  This lets the s = 2 step apply each
+# A_k only s+1 times (Appendix B), rather than recomputing A_k x when forming Adotx.
+@inline function _apply_each!(P, mats, x)
+    @inbounds for k in eachindex(mats)
+        mul!(P[k], mats[k], x)
+    end
+    return P
+end
+
+# y ← y + Σ_k c[k]·P[k]  (combine retained per-matrix products with coefficients c)
+@inline function _combine_add!(y, P, c)
+    @inbounds for k in eachindex(c)
+        axpy!(c[k], P[k], y)
+    end
+    return y
+end
+
+# y ← Σ_k c[k]·P[k]
+@inline function _combine!(y, P, c)
+    fill!(y, zero(eltype(y)))
+    return _combine_add!(y, P, c)
+end
 
 # out ← M x = Σ_k A_k Σ_m [G^s_{k,m} F_m] x, with the carrier sum folded into the
-# per-matrix bracket *before* the single matvec with A_k.  `𝒜op`/`𝒜dop` are the
-# combined 𝒜(t), 𝒜̇(t) Operators (each matrix applied once for the F_m vectors);
+# per-matrix bracket *before* the single matvec with A_k.  `Aop`/`Adop` are the
+# combined A(t), Adot(t) Operators (each matrix applied once for the F_m vectors);
 # `mats` the distinct matrices; `W` the per-carrier weight vectors; `ranges` group
 # carriers by matrix; `ed[l]` holds the carrier-l envelope derivatives
 # (c̃^{(0)},…,c̃^{(S)}); `φ[l] = e^{i ν_l t̄}` the carrier midpoint phase; `freqs` = ω.
-function _eff_apply_M!(out, x, mats, 𝒜op, 𝒜dop, W, ranges, ed, φ, freqs, ws, ::Val{S}) where {S}
+function _eff_apply_M!(out, x, mats, Aop, Adop, W, ranges, ed, φ, freqs, ws, ::Val{S}) where {S}
     fill!(out, zero(eltype(out)))
-    if S >= 1
-        mul!(ws.𝒜x, 𝒜op, x)
-        @. ws.F1x = ws.𝒜x - im * freqs * x                       # F_1 x = (𝒜 - iΩ) x
-    end
-    if S >= 2
-        mul!(ws.t1, 𝒜op, ws.𝒜x)                                  # 𝒜(𝒜x)
-        mul!(ws.t2, 𝒜dop, x)                                     # 𝒜̇ x
-        @. ws.F2x = ws.t2 + ws.t1 - (freqs^2) * x - 2im * freqs * ws.𝒜x
+    if S == 1
+        mul!(ws.Ax, Aop, x)
+        @. ws.F1x = ws.Ax - im * freqs * x                       # F_1 x = (A - iΩ) x
+    elseif S >= 2
+        _apply_each!(ws.Px, mats, x)                             # Px[:,k] = A_k x  (one matvec each)
+        _combine!(ws.Ax, ws.Px, Aop.coeffs)                     # Ax = Σ_k c_k A_k x
+        @. ws.F1x = ws.Ax - im * freqs * x                       # F_1 x = (A - iΩ) x
+        mul!(ws.t1, Aop, ws.Ax)                                  # A(Ax)
+        _combine!(ws.t2, ws.Px, Adop.coeffs)                     # Adotx = Σ_k ċ_k A_k x  (reuses Px)
+        @. ws.F2x = ws.t2 + ws.t1 - (freqs^2) * x - 2im * freqs * ws.Ax
     end
     @inbounds for k in eachindex(mats)
         fill!(ws.bracket, zero(eltype(ws.bracket)))
@@ -180,13 +213,13 @@ function _eff_apply_M!(out, x, mats, 𝒜op, 𝒜dop, W, ranges, ed, φ, freqs, 
 end
 
 # Callable applying x ↦ S_I x = x - M_I x, wrapped once in a LinearMap.  The
-# implicit-side operators (𝒜op, 𝒜dop), envelope derivatives (ed) and phases (φ)
+# implicit-side operators (Aop, Adop), envelope derivatives (ed) and phases (φ)
 # are refreshed in place each step (their types are fixed across steps), so the
 # same LinearMap and GMRES workspace are reused — the loop allocates nothing.
 mutable struct _EffControlledImplicit{S,MT,OT,WT,RT,ET,PT,FT,WST}
     mats::MT
-    𝒜op::OT
-    𝒜dop::OT
+    Aop::OT
+    Adop::OT
     W::WT
     ranges::RT
     ed::ET
@@ -196,7 +229,7 @@ mutable struct _EffControlledImplicit{S,MT,OT,WT,RT,ET,PT,FT,WST}
 end
 
 @inline function (ia::_EffControlledImplicit{S})(out, x) where {S}
-    _eff_apply_M!(out, x, ia.mats, ia.𝒜op, ia.𝒜dop, ia.W, ia.ranges, ia.ed, ia.φ,
+    _eff_apply_M!(out, x, ia.mats, ia.Aop, ia.Adop, ia.W, ia.ranges, ia.ed, ia.φ,
                   ia.freqs, ia.ws, Val(S))
     @. out = x - out
     return out
@@ -208,7 +241,7 @@ function _efficient_controlled_solve_dynamic(co, ψ0, frequencies, Δt, nsteps, 
     N = _nstate(co)
     mats = co.matrices
     wp = _efficient_dynamic_weights(co, frequencies, Δt, Val(S))
-    ws = _EffControlledDynWS(N)
+    ws = _EffControlledDynWS(N, length(mats))
     freqs = wp.freqs
 
     # Flattened carrier envelopes and their per-step derivative buffer.
@@ -220,11 +253,11 @@ function _efficient_controlled_solve_dynamic(co, ψ0, frequencies, Δt, nsteps, 
     ψ = Vector{ComplexF64}(undef, N); ψ .= ψ0
 
     # Reusable implicit operator + LinearMap + GMRES workspace (built once).
-    𝒜op0 = evaluate(co, Δt, Derivative{0}())
-    𝒜dop0 = S >= 2 ? evaluate(co, Δt, Derivative{1}()) : 𝒜op0
-    ia = _EffControlledImplicit{S,typeof(mats),typeof(𝒜op0),typeof(wp.WI),typeof(wp.ranges),
+    Aop0 = evaluate(co, Δt, Derivative{0}())
+    Adop0 = S >= 2 ? evaluate(co, Δt, Derivative{1}()) : Aop0
+    ia = _EffControlledImplicit{S,typeof(mats),typeof(Aop0),typeof(wp.WI),typeof(wp.ranges),
                                 typeof(edbuf),typeof(φbuf),typeof(freqs),typeof(ws)}(
-        mats, 𝒜op0, 𝒜dop0, wp.WI, wp.ranges, edbuf, φbuf, freqs, ws)
+        mats, Aop0, Adop0, wp.WI, wp.ranges, edbuf, φbuf, freqs, ws)
     L = LinearMap{ComplexF64}(ia, N; ismutating = true)
     kws = Krylov.krylov_workspace(Val(:gmres), L, ws.rhs)
     _stats_init!(stats, nsteps, true)
@@ -240,15 +273,15 @@ function _efficient_controlled_solve_dynamic(co, ψ0, frequencies, Δt, nsteps, 
         t_n = (n - 1) * Δt; t_np1 = n * Δt; mid = t_n + Δt / 2
         @. φbuf = cis(wp.ν * mid)                       # shared midpoint phase, both sides
         # explicit side:  rhs = ψ + M_E ψ
-        𝒜E = evaluate(co, t_n, Derivative{0}())
-        𝒜dE = S >= 2 ? evaluate(co, t_n, Derivative{1}()) : 𝒜E
+        AE = evaluate(co, t_n, Derivative{0}())
+        AdE = S >= 2 ? evaluate(co, t_n, Derivative{1}()) : AE
         _write_env_derivs!(edbuf, env_tuple, t_n, DerivativeUpTo{S}())
-        _eff_apply_M!(ws.Mψ, ψ, mats, 𝒜E, 𝒜dE, wp.WE, wp.ranges, edbuf, φbuf, freqs, ws, Val(S))
+        _eff_apply_M!(ws.Mψ, ψ, mats, AE, AdE, wp.WE, wp.ranges, edbuf, φbuf, freqs, ws, Val(S))
         @. ws.rhs = ψ + ws.Mψ
         # implicit side:  refresh ia (operators + envelope derivatives at t_{n+1}),
         # then solve (I - M_I) ψ_{n+1} = rhs matrix-free.  edbuf === ia.ed.
-        ia.𝒜op = evaluate(co, t_np1, Derivative{0}())
-        ia.𝒜dop = S >= 2 ? evaluate(co, t_np1, Derivative{1}()) : ia.𝒜op
+        ia.Aop = evaluate(co, t_np1, Derivative{0}())
+        ia.Adop = S >= 2 ? evaluate(co, t_np1, Derivative{1}()) : ia.Aop
         _write_env_derivs!(edbuf, env_tuple, t_np1, DerivativeUpTo{S}())
         Krylov.gmres!(kws, L, ws.rhs; atol = atol, rtol = rtol)
         ψ .= Krylov.solution(kws)

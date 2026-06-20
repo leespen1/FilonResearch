@@ -19,7 +19,7 @@ function carrier_problem(; ωc = 1.3)
               ωans = [-1.0, -2.0])                    # ansatz freqs (= -E)
 end
 
-# Independent reference: regular filon_solve on the full (carrier-bearing) 𝒜(t)
+# Independent reference: regular filon_solve on the full (carrier-bearing) A(t)
 # at a fine grid.
 function carrier_reference(co, ψ0, ωans, T)
     Af(t)   = materialize(evaluate(co, t, Derivative{0}()))
