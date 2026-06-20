@@ -173,23 +173,6 @@ function print_triple_table(nsteps_vec, errors_list, orders_list, labels; title=
     end
 end
 
-convergence_test_count = Ref(0)
-
-function check_convergence(errors, expected_order; floor=1e-10)
-    meaningful = [log2(errors[i] / errors[i+1])
-                  for i in 1:length(errors)-1
-                  if errors[i] > floor && errors[i+1] > floor]
-    if isempty(meaningful)
-        @test maximum(errors) < floor
-    else
-        n = min(3, length(meaningful))
-        avg_order = sum(meaningful[end-n+1:end]) / n
-        @test avg_order > expected_order - 0.5
-    end
-    @test errors[end] < errors[1] || errors[end] < floor
-    convergence_test_count[] += 1
-end
-
 function compute_orders(errors)
     return [log2(errors[i] / errors[i+1])
             for i in 1:length(errors)-1
@@ -237,6 +220,9 @@ println()
 # ============================================================================
 
 for (ω, Δω) in freq_sets
+    # these names also exist as globals leaked from test_manufactured_polynomial_solution.jl
+    # (both files are included into the same Main); keep them loop-local to avoid the ambiguity.
+    local u0, true_sol, zero_freqs
 
     freqs = ω .+ freq_coeffs .* Δω
     u0 = mixed_freq_chain_solution(freqs, 0.0)
@@ -304,10 +290,6 @@ for (ω, Δω) in freq_sets
     end
 end
 
-println()
-println("="^60)
-println("Convergence checks run: $(convergence_test_count[])")
-println("="^60)
 println("\nDone.")
 
 #end #@testset "Manufactured polynomial/oscillatory solution"
