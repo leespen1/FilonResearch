@@ -236,7 +236,7 @@ end
 end
 
 function _efficient_controlled_solve_dynamic(co, ψ0, frequencies, Δt, nsteps, ::Val{S},
-                                             save_every, save_final_only, atol, rtol,
+                                             save_every, save_final_only, warm_start, atol, rtol,
                                              stats) where {S}
     N = _nstate(co)
     mats = co.matrices
@@ -283,6 +283,7 @@ function _efficient_controlled_solve_dynamic(co, ψ0, frequencies, Δt, nsteps, 
         ia.Aop = evaluate(co, t_np1, Derivative{0}())
         ia.Adop = S >= 2 ? evaluate(co, t_np1, Derivative{1}()) : ia.Aop
         _write_env_derivs!(edbuf, env_tuple, t_np1, DerivativeUpTo{S}())
+        warm_start && Krylov.warm_start!(kws, ψ)
         Krylov.gmres!(kws, L, ws.rhs; atol = atol, rtol = rtol)
         ψ .= Krylov.solution(kws)
         _stats_record_dynamic!(stats, t0, kws)
@@ -319,7 +320,12 @@ dense matrix-vector product count scales with the number of distinct matrices an
 **not** with the number of carriers.  Only the matrix-free (GMRES) implementation
 is provided.
 
-The keyword arguments (`save_every`, `save_final_only`, `gmres_atol`,
+Pass `warm_start = true` to seed each GMRES solve with the previous step's
+solution (a good guess since the state changes little per step); it pays off
+when GMRES takes several iterations, which needs a system larger than a handful
+of states (for very small `N`, GMRES already converges in `≤ N` iterations).
+
+The keyword arguments (`save_every`, `save_final_only`, `warm_start`, `gmres_atol`,
 `gmres_rtol`, `stats`) and the return value match [`controlled_filon_solve`](@ref):
 an `N × nsaves` history matrix, or just the final state if `save_final_only`.
 
@@ -329,7 +335,7 @@ When every carrier frequency is zero this method coincides with
 function efficient_controlled_filon_solve(co::ControlledOperator, ψ0::AbstractVector,
                                           frequencies::AbstractVector, Δt::Real, nsteps::Integer,
                                           s::Integer; save_every::Integer = 1,
-                                          save_final_only::Bool = false,
+                                          save_final_only::Bool = false, warm_start::Bool = false,
                                           gmres_atol::Real = 1e-13, gmres_rtol::Real = 1e-13,
                                           stats::Union{Nothing,FilonSolveStats} = nothing)
     0 <= s <= 2 || throw(ArgumentError("efficient controlled Filon supports s ∈ {0,1,2}; got s=$s"))
@@ -342,6 +348,6 @@ function efficient_controlled_filon_solve(co::ControlledOperator, ψ0::AbstractV
         throw(DimensionMismatch("ψ0 has length $(length(ψ0)); expected $(_nstate(co))"))
 
     return _efficient_controlled_solve_dynamic(co, ψ0, frequencies, Δt, nsteps, Val(Int(s)),
-                                               save_every, save_final_only, gmres_atol,
+                                               save_every, save_final_only, warm_start, gmres_atol,
                                                gmres_rtol, stats)
 end

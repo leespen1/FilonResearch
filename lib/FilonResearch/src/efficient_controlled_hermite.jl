@@ -134,7 +134,7 @@ end
 end
 
 function _efficient_controlled_hermite_solve_dynamic(co, ψ0, Δt, nsteps, ::Val{S}, save_every,
-                                                     save_final_only, atol, rtol, stats) where {S}
+                                                     save_final_only, warm_start, atol, rtol, stats) where {S}
     N = _nstate(co)
     mats = co.matrices
     nmat = length(mats)
@@ -175,6 +175,7 @@ function _efficient_controlled_hermite_solve_dynamic(co, ψ0, Δt, nsteps, ::Val
         ia.Aop = evaluate(co, t_np1, Derivative{0}())
         ia.Adop = S >= 2 ? evaluate(co, t_np1, Derivative{1}()) : ia.Aop
         _write_env_derivs!(edbuf, co.controls, t_np1, DerivativeUpTo{S}())
+        warm_start && Krylov.warm_start!(kws, ψ)
         Krylov.gmres!(kws, L, ws.rhs; atol = atol, rtol = rtol)
         ψ .= Krylov.solution(kws)
         _stats_record_dynamic!(stats, t0, kws)
@@ -210,14 +211,18 @@ The result is identical (to round-off) to [`hermite_solve_hardcoded`](@ref) on t
 same operator — only the matrix-vector ordering differs — but uses fewer dense
 products.  Only the matrix-free (GMRES) implementation is provided.
 
-The keyword arguments (`save_every`, `save_final_only`, `gmres_atol`,
+Pass `warm_start = true` to seed each GMRES solve with the previous step's
+solution; it helps when GMRES takes several iterations (i.e. for systems larger
+than a handful of states).
+
+The keyword arguments (`save_every`, `save_final_only`, `warm_start`, `gmres_atol`,
 `gmres_rtol`, `stats`) and the return value match [`hermite_solve_hardcoded`](@ref):
 an `N × nsaves` history matrix, or just the final state if `save_final_only`.
 """
 function efficient_controlled_hermite_solve(co::ControlledOperator, ψ0::AbstractVector,
                                             Δt::Real, nsteps::Integer, s::Integer;
                                             save_every::Integer = 1,
-                                            save_final_only::Bool = false,
+                                            save_final_only::Bool = false, warm_start::Bool = false,
                                             gmres_atol::Real = 1e-13, gmres_rtol::Real = 1e-13,
                                             stats::Union{Nothing,FilonSolveStats} = nothing)
     0 <= s <= 2 || throw(ArgumentError("efficient controlled Hermite supports s ∈ {0,1,2}; got s=$s"))
@@ -227,6 +232,6 @@ function efficient_controlled_hermite_solve(co::ControlledOperator, ψ0::Abstrac
         throw(DimensionMismatch("ψ0 has length $(length(ψ0)); expected $(_nstate(co))"))
 
     return _efficient_controlled_hermite_solve_dynamic(co, ψ0, Δt, nsteps, Val(Int(s)),
-                                                       save_every, save_final_only, gmres_atol,
-                                                       gmres_rtol, stats)
+                                                       save_every, save_final_only, warm_start,
+                                                       gmres_atol, gmres_rtol, stats)
 end

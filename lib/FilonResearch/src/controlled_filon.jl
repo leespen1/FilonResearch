@@ -272,7 +272,7 @@ end
 end
 
 function _controlled_solve_dynamic(co, ψ0, frequencies, Δt, nsteps, ::Val{S}, save_every,
-                                   save_final_only, atol, rtol, stats) where {S}
+                                   save_final_only, warm_start, atol, rtol, stats) where {S}
     N = _nstate(co)
     ncontrol = length(co.matrices)
     envco = _envelope_operator(co)
@@ -314,6 +314,7 @@ function _controlled_solve_dynamic(co, ψ0, frequencies, Δt, nsteps, ::Val{S}, 
         ia.Adop = S >= 2 ? evaluate(co, t_np1, Derivative{1}()) : ia.Aop
         c0I, c1I, c2I = _envelope_coeffs(envco, t_np1, Val(S))
         ia.c0 = c0I; ia.c1 = c1I; ia.c2 = c2I
+        warm_start && Krylov.warm_start!(kws, ψ)
         Krylov.gmres!(kws, L, ws.rhs; atol = atol, rtol = rtol)
         ψ .= Krylov.solution(kws)
         _stats_record_dynamic!(stats, t0, kws)
@@ -385,9 +386,13 @@ zero-carrier).  `frequencies` are the ansatz frequencies ω (one per state
 component); each control term `k` is integrated with the modified ansatz
 `ω + ω_{c,k}`.
 
-The keyword arguments (`save_every`, `save_final_only`, `variant`, `gmres_atol`,
-`gmres_rtol`, `stats`) and the return value match [`filon_solve_hardcoded`](@ref):
-an `N × nsaves` history matrix, or just the final state if `save_final_only`.
+Pass `warm_start = true` (dynamic variant only) to seed each GMRES solve with the
+previous step's solution; it helps when GMRES takes several iterations.
+
+The keyword arguments (`save_every`, `save_final_only`, `warm_start`, `variant`,
+`gmres_atol`, `gmres_rtol`, `stats`) and the return value match
+[`filon_solve_hardcoded`](@ref): an `N × nsaves` history matrix, or just the final
+state if `save_final_only`.
 
 When every carrier frequency is zero this method coincides with
 [`filon_solve_hardcoded`](@ref) (regular Filon).
@@ -395,7 +400,8 @@ When every carrier frequency is zero this method coincides with
 function controlled_filon_solve(co::ControlledOperator, ψ0::AbstractVector,
                                 frequencies::AbstractVector, Δt::Real, nsteps::Integer,
                                 s::Integer; save_every::Integer = 1,
-                                save_final_only::Bool = false, variant::Symbol = :auto,
+                                save_final_only::Bool = false, warm_start::Bool = false,
+                                variant::Symbol = :auto,
                                 gmres_atol::Real = 1e-13, gmres_rtol::Real = 1e-13,
                                 stats::Union{Nothing,FilonSolveStats} = nothing)
     0 <= s <= 2 || throw(ArgumentError("controlled Filon supports s ∈ {0,1,2}; got s=$s"))
@@ -412,7 +418,7 @@ function controlled_filon_solve(co::ControlledOperator, ψ0::AbstractVector,
                                         save_every, save_final_only, stats)
     else
         return _controlled_solve_dynamic(co, ψ0, frequencies, Δt, nsteps, Val(Int(s)),
-                                         save_every, save_final_only, gmres_atol, gmres_rtol,
+                                         save_every, save_final_only, warm_start, gmres_atol, gmres_rtol,
                                          stats)
     end
 end
