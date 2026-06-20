@@ -128,7 +128,7 @@ end
 # DYNAMIC — matrix-free application of  M_*  (so S_* x = x ± M_* x)
 # -----------------------------------------------------------------------------
 
-struct _EffControlledDynWS{V<:AbstractVector,P}
+struct _EffControlledDynWS{V<:AbstractVector,P,GT}
     Ax::V
     F1x::V
     F2x::V
@@ -139,10 +139,12 @@ struct _EffControlledDynWS{V<:AbstractVector,P}
     Mψ::V
     rhs::V
     Px::P       # nmat per-matrix products A_k x, retained so Ax and Adotx share them
+    G::GT       # G[k][m+1]: per-step generator diagonal (matrix k, order m), reused across GMRES iters
 end
-function _EffControlledDynWS(N::Integer, nmat::Integer)
+function _EffControlledDynWS(N::Integer, nmat::Integer, nord::Integer)
     return _EffControlledDynWS(ntuple(_ -> zeros(ComplexF64, N), Val(9))...,
-                               [zeros(ComplexF64, N) for _ in 1:nmat])
+                               [zeros(ComplexF64, N) for _ in 1:nmat],
+                               [[zeros(ComplexF64, N) for _ in 1:nord] for _ in 1:nmat])
 end
 
 # Per-matrix products P[k] = mats[k]·x, retained so several combined operators
@@ -170,19 +172,41 @@ end
     return _combine_add!(y, P, c)
 end
 
-# out ← M x = Σ_k A_k Σ_m [G^s_{k,m} F_m] x, with the carrier sum folded into the
-# per-matrix bracket *before* the single matvec with A_k.  `Aop`/`Adop` are the
-# combined A(t), Adot(t) Operators (each matrix applied once for the F_m vectors);
-# `mats` the distinct matrices; `W` the per-carrier weight vectors; `ranges` group
-# carriers by matrix; `ed[l]` holds the carrier-l envelope derivatives
-# (c̃^{(0)},…,c̃^{(S)}); `φ[l] = e^{i ν_l t̄}` the carrier midpoint phase; `freqs` = ω.
-function _eff_apply_M!(out, x, mats, Aop, Adop, W, ranges, ed, φ, freqs, ws, ::Val{S}) where {S}
+# Build the per-step generator diagonals
+#   G[k][m+1] = Σ_{l∈ranges[k]} φ_l Σ_{j=m}^S C(j,m) ed_l[j-m+1] W_l[j+1].
+# These fold the whole carrier × derivative-order sum into one diagonal per (matrix,
+# order) and depend only on the step time (envelope derivatives `ed`, midpoint phases
+# `φ`), not on the Krylov vector.  Building them once per step/side lets each GMRES
+# apply skip the carrier expansion, so the repeated diagonal work scales with the
+# number of matrices rather than the number of carriers.
+function _build_generators!(G, W, ranges, ed, φ, ::Val{S}) where {S}
+    @inbounds for k in eachindex(ranges)
+        Gk = G[k]
+        for m in 0:S
+            fill!(Gk[m + 1], zero(ComplexF64))
+        end
+        for l in ranges[k]
+            Wl = W[l]; e = ed[l]; p = φ[l]
+            for m in 0:S, j in m:S
+                axpy!(p * binomial(j, m) * e[j - m + 1], Wl[j + 1], Gk[m + 1])
+            end
+        end
+    end
+    return G
+end
+
+# out ← M x = Σ_k A_k Σ_m [G_{k,m} F_m] x.  The per-step generator diagonals
+# G_{k,m} = ws.G[k][m+1] (built by `_build_generators!`) already fold the carrier ×
+# order sum, so each apply just gathers them against the F_m x vectors and applies
+# each A_k once.  `Aop`/`Adop` are the combined A(t), Adot(t) Operators (for the F_m
+# vectors); `freqs` = ω.
+function _eff_apply_M!(out, x, mats, Aop, Adop, freqs, ws, ::Val{S}) where {S}
     fill!(out, zero(eltype(out)))
     if S == 1
         mul!(ws.Ax, Aop, x)
         @. ws.F1x = ws.Ax - im * freqs * x                       # F_1 x = (A - iΩ) x
     elseif S >= 2
-        _apply_each!(ws.Px, mats, x)                             # Px[:,k] = A_k x  (one matvec each)
+        _apply_each!(ws.Px, mats, x)                             # Px[k] = A_k x  (one matvec each)
         _combine!(ws.Ax, ws.Px, Aop.coeffs)                     # Ax = Σ_k c_k A_k x
         @. ws.F1x = ws.Ax - im * freqs * x                       # F_1 x = (A - iΩ) x
         mul!(ws.t1, Aop, ws.Ax)                                  # A(Ax)
@@ -190,21 +214,13 @@ function _eff_apply_M!(out, x, mats, Aop, Adop, W, ranges, ed, φ, freqs, ws, ::
         @. ws.F2x = ws.t2 + ws.t1 - (freqs^2) * x - 2im * freqs * ws.Ax
     end
     @inbounds for k in eachindex(mats)
-        fill!(ws.bracket, zero(eltype(ws.bracket)))
-        for l in ranges[k]
-            Wl = W[l]
-            e = ed[l]
-            p = φ[l]
-            if S == 0
-                @. ws.bracket += p * (e[1] * Wl[1] * x)
-            elseif S == 1
-                @. ws.bracket += p * (e[1] * Wl[1] * x + e[2] * Wl[2] * x +
-                                      e[1] * Wl[2] * ws.F1x)
-            else
-                @. ws.bracket += p * (e[1] * Wl[1] * x + e[2] * Wl[2] * x +
-                                      e[1] * Wl[2] * ws.F1x + e[3] * Wl[3] * x +
-                                      2 * e[2] * Wl[3] * ws.F1x + e[1] * Wl[3] * ws.F2x)
-            end
+        Gk = ws.G[k]
+        if S == 0
+            @. ws.bracket = Gk[1] * x
+        elseif S == 1
+            @. ws.bracket = Gk[1] * x + Gk[2] * ws.F1x
+        else
+            @. ws.bracket = Gk[1] * x + Gk[2] * ws.F1x + Gk[3] * ws.F2x
         end
         mul!(ws.Akbk, mats[k], ws.bracket)
         @. out += ws.Akbk
@@ -213,24 +229,19 @@ function _eff_apply_M!(out, x, mats, Aop, Adop, W, ranges, ed, φ, freqs, ws, ::
 end
 
 # Callable applying x ↦ S_I x = x - M_I x, wrapped once in a LinearMap.  The
-# implicit-side operators (Aop, Adop), envelope derivatives (ed) and phases (φ)
-# are refreshed in place each step (their types are fixed across steps), so the
-# same LinearMap and GMRES workspace are reused — the loop allocates nothing.
-mutable struct _EffControlledImplicit{S,MT,OT,WT,RT,ET,PT,FT,WST}
+# implicit-side operators (Aop, Adop) are refreshed in place each step, and the
+# generator diagonals ws.G are rebuilt each step before the solve, so the same
+# LinearMap and GMRES workspace are reused — the loop allocates nothing.
+mutable struct _EffControlledImplicit{S,MT,OT,FT,WST}
     mats::MT
     Aop::OT
     Adop::OT
-    W::WT
-    ranges::RT
-    ed::ET
-    φ::PT
     freqs::FT
     ws::WST
 end
 
 @inline function (ia::_EffControlledImplicit{S})(out, x) where {S}
-    _eff_apply_M!(out, x, ia.mats, ia.Aop, ia.Adop, ia.W, ia.ranges, ia.ed, ia.φ,
-                  ia.freqs, ia.ws, Val(S))
+    _eff_apply_M!(out, x, ia.mats, ia.Aop, ia.Adop, ia.freqs, ia.ws, Val(S))
     @. out = x - out
     return out
 end
@@ -241,7 +252,7 @@ function _efficient_controlled_solve_dynamic(co, ψ0, frequencies, Δt, nsteps, 
     N = _nstate(co)
     mats = co.matrices
     wp = _efficient_dynamic_weights(co, frequencies, Δt, Val(S))
-    ws = _EffControlledDynWS(N, length(mats))
+    ws = _EffControlledDynWS(N, length(mats), S + 1)
     freqs = wp.freqs
 
     # Flattened carrier envelopes and their per-step derivative buffer.
@@ -255,9 +266,8 @@ function _efficient_controlled_solve_dynamic(co, ψ0, frequencies, Δt, nsteps, 
     # Reusable implicit operator + LinearMap + GMRES workspace (built once).
     Aop0 = evaluate(co, Δt, Derivative{0}())
     Adop0 = S >= 2 ? evaluate(co, Δt, Derivative{1}()) : Aop0
-    ia = _EffControlledImplicit{S,typeof(mats),typeof(Aop0),typeof(wp.WI),typeof(wp.ranges),
-                                typeof(edbuf),typeof(φbuf),typeof(freqs),typeof(ws)}(
-        mats, Aop0, Adop0, wp.WI, wp.ranges, edbuf, φbuf, freqs, ws)
+    ia = _EffControlledImplicit{S,typeof(mats),typeof(Aop0),typeof(freqs),typeof(ws)}(
+        mats, Aop0, Adop0, freqs, ws)
     L = LinearMap{ComplexF64}(ia, N; ismutating = true)
     kws = Krylov.krylov_workspace(Val(:gmres), L, ws.rhs)
     _stats_init!(stats, nsteps, true)
@@ -276,13 +286,16 @@ function _efficient_controlled_solve_dynamic(co, ψ0, frequencies, Δt, nsteps, 
         AE = evaluate(co, t_n, Derivative{0}())
         AdE = S >= 2 ? evaluate(co, t_n, Derivative{1}()) : AE
         _write_env_derivs!(edbuf, env_tuple, t_n, DerivativeUpTo{S}())
-        _eff_apply_M!(ws.Mψ, ψ, mats, AE, AdE, wp.WE, wp.ranges, edbuf, φbuf, freqs, ws, Val(S))
+        _build_generators!(ws.G, wp.WE, wp.ranges, edbuf, φbuf, Val(S))
+        _eff_apply_M!(ws.Mψ, ψ, mats, AE, AdE, freqs, ws, Val(S))
         @. ws.rhs = ψ + ws.Mψ
-        # implicit side:  refresh ia (operators + envelope derivatives at t_{n+1}),
-        # then solve (I - M_I) ψ_{n+1} = rhs matrix-free.  edbuf === ia.ed.
+        # implicit side:  refresh the operators at t_{n+1}, rebuild the implicit
+        # generators G_I (reused across GMRES iterations), then solve
+        # (I - M_I) ψ_{n+1} = rhs matrix-free.
         ia.Aop = evaluate(co, t_np1, Derivative{0}())
         ia.Adop = S >= 2 ? evaluate(co, t_np1, Derivative{1}()) : ia.Aop
         _write_env_derivs!(edbuf, env_tuple, t_np1, DerivativeUpTo{S}())
+        _build_generators!(ws.G, wp.WI, wp.ranges, edbuf, φbuf, Val(S))
         warm_start && Krylov.warm_start!(kws, ψ)
         Krylov.gmres!(kws, L, ws.rhs; atol = atol, rtol = rtol)
         ψ .= Krylov.solution(kws)
