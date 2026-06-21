@@ -58,6 +58,13 @@ const ORDER_MARKERS = (:circle, :rect, :diamond)
 # Errors outside this window are dropped before plotting: the upper bound hides
 # diverged coarse-step runs, the lower bound hides the round-off floor.
 const ERROR_WINDOW = (1e-13, 1e1)
+# Work-precision plots additionally drop everything coarser than this error: in
+# the pre-asymptotic / coarse-step-blowup regime the iterative solve thrashes
+# (GMRES needs many iterations on near-unstable steps), so wall time is *not*
+# monotone in nsteps there — the first stable run can be slower than finer, more
+# accurate ones, which folds the error-vs-time curve back on itself.  Restricting
+# to the converged regime gives the usual monotone work-precision curves.
+const WORKPRECISION_ERROR_MAX = 1e-1
 # Optionally restrict the timestep range, globally or per method.  `nothing`
 # means "no restriction".
 const NSTEPS_WINDOW = Dict{Symbol,Any}()   # e.g. :filon => (2^4, 2^14)
@@ -101,8 +108,8 @@ const ERROR_COL = :final_error
 # Plotting
 # -----------------------------------------------------------------------------
 
-"Rows for one (method, s), filtered and sorted by nsteps, as (nsteps, error)."
-function curve(df, method, s; error_col = ERROR_COL)
+"Sub-DataFrame for one (method, s): NSTEPS_WINDOW- and ERROR_WINDOW-filtered, sorted by nsteps."
+function curve_rows(df, method, s; error_col = ERROR_COL)
     sub = df[(df.method .== method) .& (df.s .== s), :]
     win = get(NSTEPS_WINDOW, method, nothing)
     if win !== nothing
@@ -112,6 +119,12 @@ function curve(df, method, s; error_col = ERROR_COL)
     keep = (err .>= ERROR_WINDOW[1]) .& (err .<= ERROR_WINDOW[2]) .& isfinite.(err)
     sub = sub[keep, :]
     sort!(sub, :nsteps)
+    return sub
+end
+
+"Rows for one (method, s), filtered and sorted by nsteps, as (nsteps, error)."
+function curve(df, method, s; error_col = ERROR_COL)
+    sub = curve_rows(df, method, s; error_col)
     return Vector{Float64}(sub.nsteps), Vector{Float64}(sub[!, error_col])
 end
 
@@ -212,8 +225,129 @@ function make_timing_figure(df, methods; basename = "cnot3_timing_$(frame)")
     return fig
 end
 
+"""
+Convergence panel against the time step Δt = Tmax/nsteps (instead of nsteps):
+error decreases as Δt → 0 (curves descend to the left), with O(Δtᵖ) guides.
+"""
+function make_stepsize_figure(df, methods; basename = "cnot3_stepsize_$(frame)")
+    fig = Figure(size = (7.5inch, 4.6inch), fontsize = 11)
+    Label(fig[0, 1:2],
+          L"\textrm{CNOT3\;gate\;convergence}\;\;(N_{\mathrm{osc}}=%$(ref.nOscLevels),\;T=%$(Tmax),\;\textrm{%$(frame)\;frame})";
+          fontsize = 13, padding = (0, 0, 6, 0))
+    ax = Axis(fig[1, 1];
+              xlabel = L"Time step $\Delta t$", ylabel = "Final-time 2-norm error",
+              xscale = log10, yscale = log10)
+
+    all_dt = Float64[]
+    for m in methods, s in SVALS
+        r = curve_rows(df, m, s); append!(all_dt, Tmax ./ r.nsteps)
+    end
+    isempty(all_dt) && error("Nothing to plot after filtering.")
+    dtfine = exp10.(range(log10(minimum(all_dt)), log10(maximum(all_dt)), length = 200))
+
+    # O(Δtᵖ) guide, anchored to the first method/order with data.
+    for s in SVALS
+        p = 2 * (s + 1)
+        for m in methods
+            r = curve_rows(df, m, s); isempty(r) && continue
+            dt = Tmax ./ r.nsteps; e = r[!, ERROR_COL]
+            C = e[1] / dt[1]^p
+            lines!(ax, dtfine, C .* dtfine .^ p;
+                   color = :gray, linestyle = :dot, linewidth = 1.5)
+            break
+        end
+    end
+
+    for m in methods, (si, s) in enumerate(SVALS)
+        r = curve_rows(df, m, s); isempty(r) && continue
+        scatterlines!(ax, Tmax ./ r.nsteps, Vector{Float64}(r[!, ERROR_COL]);
+                      color = METHOD_COLORS[m], marker = ORDER_MARKERS[si],
+                      markersize = 9, linewidth = 1.5)
+    end
+    ylims!(ax, ERROR_WINDOW[1] / 10, ERROR_WINDOW[2] * 10)
+
+    method_entries = [LineElement(color = METHOD_COLORS[m], linewidth = 2) for m in methods]
+    order_entries  = [MarkerElement(marker = ORDER_MARKERS[j], color = :black, markersize = 9)
+                      for j in 1:length(SVALS)]
+    ref_entry      = [LineElement(color = :gray, linestyle = :dot, linewidth = 1.5)]
+    Legend(fig[1, 2],
+           [method_entries, order_entries, ref_entry],
+           [[METHOD_LABELS[m] for m in methods],
+            [L"s=0\;(O(\Delta t^2))", L"s=1\;(O(\Delta t^4))", L"s=2\;(O(\Delta t^6))"],
+            [L"O(\Delta t^p)\;\textrm{guide}"]],
+           ["Method", "Order", "Slope"],
+           orientation = :vertical, tellheight = false, tellwidth = true)
+    colsize!(fig.layout, 1, Relative(0.72))
+
+    mkpath(plotsdir("cnot3"))
+    for ext in ("png", "svg", "pdf")
+        save(plotsdir("cnot3", "$(basename).$(ext)"), fig)
+    end
+    println("  saved → ", plotsdir("cnot3", "$(basename).{png,svg,pdf}"))
+    return fig
+end
+
+"""
+Work–precision (efficiency) diagram: final-time error vs wall-clock solve time,
+log-log.  Down-and-to-the-left is better (accurate AND cheap); the leftmost
+curve at a given error level is the most efficient method.
+"""
+function make_workprecision_figure(df, methods; basename = "cnot3_workprecision_$(frame)")
+    fig = Figure(size = (7.5inch, 4.6inch), fontsize = 11)
+    Label(fig[0, 1:2],
+          L"\textrm{CNOT3\;work-precision}\;\;(\textrm{%$(frame)\;frame})";
+          fontsize = 13, padding = (0, 0, 6, 0))
+    ax = Axis(fig[1, 1];
+              xlabel = "Solve time (s)", ylabel = "Final-time 2-norm error",
+              xscale = log10, yscale = log10)
+
+    # Draw each method's EFFICIENCY FRONTIER: the lower-left Pareto set of
+    # (time, error).  Wall time is not monotone in nsteps near the coarse-step
+    # stability edge (GMRES thrashes there, so the first stable run can cost more
+    # than finer, more-accurate ones) and the error saturates/ticks up at the
+    # round-off floor — both produce points that are dominated (slower AND less
+    # accurate than another run of the same method).  Keeping only non-dominated
+    # points removes the spurious folds and shows the achievable accuracy-vs-cost
+    # tradeoff, which is the point of a work-precision diagram.
+    for m in methods, (si, s) in enumerate(SVALS)
+        r = curve_rows(df, m, s)
+        r = r[r[!, ERROR_COL] .<= WORKPRECISION_ERROR_MAX, :]   # converged regime only
+        isempty(r) && continue
+        t = Vector{Float64}(r.t_elapsed); e = Vector{Float64}(r[!, ERROR_COL])
+        ord = sortperm(t)
+        keep = Int[]; best = Inf
+        for i in ord
+            if e[i] < best
+                push!(keep, i); best = e[i]
+            end
+        end
+        scatterlines!(ax, t[keep], e[keep];
+                      color = METHOD_COLORS[m], marker = ORDER_MARKERS[si],
+                      markersize = 9, linewidth = 1.5)
+    end
+    ylims!(ax, ERROR_WINDOW[1] / 10, WORKPRECISION_ERROR_MAX * 10)
+
+    method_entries = [LineElement(color = METHOD_COLORS[m], linewidth = 2) for m in methods]
+    order_entries  = [MarkerElement(marker = ORDER_MARKERS[j], color = :black, markersize = 9)
+                      for j in 1:length(SVALS)]
+    Legend(fig[1, 2], [method_entries, order_entries],
+           [[METHOD_LABELS[m] for m in methods],
+            [L"s=0\;(O(\Delta t^2))", L"s=1\;(O(\Delta t^4))", L"s=2\;(O(\Delta t^6))"]],
+           ["Method", "Order"]; orientation = :vertical, tellheight = false, tellwidth = true)
+    colsize!(fig.layout, 1, Relative(0.72))
+
+    mkpath(plotsdir("cnot3"))
+    for ext in ("png", "svg", "pdf")
+        save(plotsdir("cnot3", "$(basename).$(ext)"), fig)
+    end
+    println("  saved → ", plotsdir("cnot3", "$(basename).{png,svg,pdf}"))
+    return fig
+end
+
 methods_present = [m for m in METHOD_ORDER if m in df.method]
 fig_conv = make_convergence_figure(df, methods_present)
 fig_time = make_timing_figure(df, methods_present)
+fig_dt   = make_stepsize_figure(df, methods_present)
+fig_wp   = make_workprecision_figure(df, methods_present)
 println("Done.")
 fig_conv
