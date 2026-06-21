@@ -41,11 +41,12 @@ const init = get(ENV, "CNOT3_INIT", "basis")
 const frame = get(ENV, "CNOT3_FRAME", "rwa")
 
 # Display order / labels / styling for the methods.
-const METHOD_ORDER  = (:hermite, :filon, :controlled_filon)
+const METHOD_ORDER  = (:hermite, :filon, :controlled_filon, :controlled_hermite)
 const METHOD_LABELS = Dict(
-    :hermite          => "Hermite (QGD)",
-    :filon            => "Filon",
-    :controlled_filon => "Controlled-Filon",
+    :hermite            => "Hermite (QGD)",
+    :filon              => "Filon",
+    :controlled_filon   => "Controlled-Filon",
+    :controlled_hermite => "Controlled-Hermite",
 )
 const SVALS         = (0, 1, 2)
 const METHOD_COLORS = Dict(m => c for (m, c) in zip(METHOD_ORDER, Makie.wong_colors()))

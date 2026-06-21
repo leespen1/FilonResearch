@@ -87,9 +87,19 @@ function run_simulation(config)
         controlled_filon_solve(co, cols[1], freqs, config.Tmax / 2, 2,
                                config.s; save_final_only = true)           # warm-up
         t_elapsed = @elapsed history = stack_histories(map(solve_one, cols))
+    elseif config.method == :controlled_hermite
+        # The ω = 0 (Hermite) counterpart of the efficient controlled Filon
+        # method: same full A(t) operator as :filon (carriers folded into the
+        # controls), but each control matrix is applied only s+1 times per step.
+        co = qgd_to_controlled_operator(qgd_prob, controls, pcof)
+        solve_one = c -> efficient_controlled_hermite_solve(
+            co, c, config.Tmax / nsteps, nsteps, config.s; save_every)
+        efficient_controlled_hermite_solve(co, cols[1], config.Tmax / 2, 2,
+                                           config.s; save_final_only = true) # warm-up
+        t_elapsed = @elapsed history = stack_histories(map(solve_one, cols))
     else
-        throw(ArgumentError("Invalid method '$(config.method)'. " *
-            "Must be :hermite, :filon, or :controlled_filon."))
+        throw(ArgumentError("Invalid method '$(config.method)'. Must be " *
+            ":hermite, :filon, :controlled_filon, or :controlled_hermite."))
     end
 
     output = @strdict history t_elapsed t_saves

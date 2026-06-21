@@ -1,0 +1,38 @@
+#!/bin/bash --login
+#SBATCH --job-name=cnot3_convergence
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem-per-cpu=8GB
+#SBATCH --export=NONE
+#SBATCH --constraint=intel18
+#SBATCH --time=3:59:00
+#SBATCH --output=log/cnot3_convergence_%A.log
+
+# Variant of cnot3_convergence_collect_data.sb that compiles package caches
+# into a node-local scratch depot instead of the shared ~/.julia.  Concurrent
+# job waves were repeatedly invalidating and recompiling each other's caches
+# on the shared depot (hours of lost wall time); a per-job local cache makes
+# startup deterministic at the cost of one precompile per job.
+mkdir -p log
+
+echo "Date              = $(date)"
+echo "Hostname          = $(hostname -s)"
+echo "Working Directory = $(pwd)"
+echo ""
+echo "Number of Nodes Allocated      = $SLURM_JOB_NUM_NODES"
+echo "Number of Tasks Per Node       = $SLURM_NTASKS_PER_NODE"
+echo "Number of CPUs Per Task        = $SLURM_CPUS_PER_TASK"
+echo "Memory per CPU                = $SLURM_MEM_PER_CPU"
+echo ""
+
+LOCAL_DEPOT="${TMPDIR:-/tmp}/jdepot-$SLURM_JOB_ID"
+mkdir -p "$LOCAL_DEPOT"
+export JULIA_DEPOT_PATH="$LOCAL_DEPOT:$HOME/.julia"
+# srun-launched Distributed workers inherit this environment (single node, so
+# they share the same local depot).
+
+echo "Precompiling into $LOCAL_DEPOT ..."
+time julia --project -e 'import Pkg; Pkg.precompile()'
+
+julia --project cnot3_convergence_collect_data.jl "$@"

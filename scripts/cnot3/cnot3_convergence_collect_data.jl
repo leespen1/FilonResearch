@@ -1,17 +1,21 @@
 """
 cnot3_convergence_collect_data.jl
 
-Collect convergence data for three integrators on the optimized CNOT3 gate
+Collect convergence data for four integrators on the optimized CNOT3 gate
 problem from the High-Order Hermite Optimization (HOHO) paper:
 
-  * `:hermite`          — QuantumGateDesign's `eval_forward` (the true Hermite
-                          method, the baseline competitor).
-  * `:filon`            — the new hard-coded Filon method
-                          (`filon_solve_hardcoded`), drift-diagonal ansatz
-                          frequencies.
-  * `:controlled_filon` — the new controlled Filon method
-                          (`controlled_filon_solve`), which additionally factors
-                          each control's carrier waves out of the quadrature.
+  * `:hermite`            — QuantumGateDesign's `eval_forward` (the true Hermite
+                            method, the baseline competitor).
+  * `:filon`              — the new hard-coded Filon method
+                            (`filon_solve_hardcoded`), drift-diagonal ansatz
+                            frequencies.
+  * `:controlled_filon`   — the new controlled Filon method
+                            (`controlled_filon_solve`), which additionally factors
+                            each control's carrier waves out of the quadrature.
+  * `:controlled_hermite` — the ω = 0 counterpart of the efficient controlled
+                            Filon method (`efficient_controlled_hermite_solve`):
+                            same full A(t) as `:filon`, but applies each control
+                            matrix only s+1 times per step.
 
 Each `(method, s, nsteps)` solve is cached individually via DrWatson's
 `produce_or_load`, so re-running only computes missing results.  Data collection
@@ -24,7 +28,8 @@ With no arguments the full default sweep below runs (unchanged behaviour for a
 plain `julia --project cnot3_convergence_collect_data.jl`).  Optional flags
 narrow the sweep so a single job — local or on SLURM — can target a batch:
 
-  * `--method hermite,filon`   one or more of `hermite|filon|controlled_filon`
+  * `--method hermite,filon`   one or more of
+                               `hermite|filon|controlled_filon|controlled_hermite`
   * `--s 0,1`                  order parameter(s) s   (order = 2(s+1))
   * `--nsteps 128,256,512`     explicit step counts (overrides the 2^e defaults)
   * `--init basis,uniform`     initial condition(s): `basis` (default, full
@@ -60,7 +65,7 @@ nsaves = 16
 # "uniform" (uniform superposition), or "eN" (the N-th basis vector).
 initialCondition = "basis"
 
-all_methods = (:hermite, :filon, :controlled_filon)
+all_methods = (:hermite, :filon, :controlled_filon, :controlled_hermite)
 all_frames = ("rwa", "norwa", "lab")
 
 s_values = (0, 1, 2)                       # order = 2(s+1) ∈ {2,4,6}
