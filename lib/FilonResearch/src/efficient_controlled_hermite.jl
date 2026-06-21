@@ -70,7 +70,7 @@ end
 # DYNAMIC — matrix-free application of  M_*  (so S_* x = x ± M_* x)
 # -----------------------------------------------------------------------------
 
-struct _EffControlledHermiteWS{V<:AbstractVector,P}
+struct _EffControlledHermiteWS{V<:AbstractVector,P,GT}
     Ax::V
     F2x::V
     bracket::V
@@ -78,36 +78,56 @@ struct _EffControlledHermiteWS{V<:AbstractVector,P}
     Mψ::V
     rhs::V
     Px::P       # nmat per-matrix products A_k x, retained so Ax and Adotx share them
+    G::GT       # G[k][m+1]: per-step generator scalar (matrix k, order m), reused across GMRES iters
 end
-function _EffControlledHermiteWS(N::Integer, nmat::Integer)
+function _EffControlledHermiteWS(N::Integer, nmat::Integer, nord::Integer)
     return _EffControlledHermiteWS(ntuple(_ -> zeros(ComplexF64, N), Val(6))...,
-                                   [zeros(ComplexF64, N) for _ in 1:nmat])
+                                   [zeros(ComplexF64, N) for _ in 1:nmat],
+                                   [zeros(ComplexF64, nord) for _ in 1:nmat])
 end
 
-# out ← M x = Σ_k A_k Σ_m [G^s_{k,m} F_m] x, with the derivatives on the scalar
-# control gathered into the per-matrix bracket before the single matvec with A_k.
-# `Aop`/`Adop` are the combined A(t), Adot(t) Operators (each matrix applied once for
-# the F_m vectors); `mats` the distinct matrices; `W` the scalar weights; `ed[k]`
-# holds the control-k derivatives (c_k^{(0)},…,c_k^{(S)}).
-function _eff_hermite_apply_M!(out, x, mats, Aop, Adop, W, ed, ws, ::Val{S}) where {S}
+# Build the per-step generator scalars  G_{k,m} = Σ_{j=m}^s C(j,m) c_k^{(j-m)} w^s_j.
+# Unlike the Filon generators (per-component diagonals), the Hermite weights w^s_j
+# are scalar and there is one control per matrix, so each generator is a scalar.
+# They do not depend on x, so building them once per step lets every GMRES iteration
+# reuse them (and collapses the bracket from C(s+2,2) scalar·vector terms to s+1).
+function _build_hermite_generators!(G, W, ed, ::Val{S}) where {S}
+    @inbounds for k in eachindex(ed)
+        Gk = G[k]; c = ed[k]
+        for m in 0:S
+            g = zero(ComplexF64)
+            for j in m:S
+                g += binomial(j, m) * c[j - m + 1] * W[j + 1]
+            end
+            Gk[m + 1] = g
+        end
+    end
+    return G
+end
+
+# out ← M x = Σ_k A_k Σ_m [G^s_{k,m} F_m] x.  The per-step generator scalars
+# G_{k,m} = ws.G[k][m+1] (built by `_build_hermite_generators!`) already fold the
+# control-derivative × weight sum, so each apply just gathers them against the F_m x
+# vectors and applies each A_k once.  `Aop`/`Adop` are the combined A(t), Adot(t)
+# Operators (for the F_m vectors); `mats` the distinct matrices.
+function _eff_hermite_apply_M!(out, x, mats, Aop, Adop, ws, ::Val{S}) where {S}
     fill!(out, zero(eltype(out)))
     if S == 1
         mul!(ws.Ax, Aop, x)                                      # F_1 x = A x  (Ω = 0)
     elseif S >= 2
-        _apply_each!(ws.Px, mats, x)                             # Px[:,k] = A_k x  (one matvec each)
+        _apply_each!(ws.Px, mats, x)                             # Px[k] = A_k x  (one matvec each)
         _combine!(ws.Ax, ws.Px, Aop.coeffs)                     # Ax = Σ_k c_k A_k x
         mul!(ws.F2x, Aop, ws.Ax)                                 # A(A x)
         _combine_add!(ws.F2x, ws.Px, Adop.coeffs)               # + Adotx = Σ_k ċ_k A_k x  ⇒ F_2 x  (reuses Px)
     end
     @inbounds for k in eachindex(mats)
-        c = ed[k]
+        Gk = ws.G[k]
         if S == 0
-            @. ws.bracket = c[1] * W[1] * x
+            @. ws.bracket = Gk[1] * x
         elseif S == 1
-            @. ws.bracket = c[1] * W[1] * x + c[2] * W[2] * x + c[1] * W[2] * ws.Ax
+            @. ws.bracket = Gk[1] * x + Gk[2] * ws.Ax
         else
-            @. ws.bracket = c[1] * W[1] * x + c[2] * W[2] * x + c[1] * W[2] * ws.Ax +
-                            c[3] * W[3] * x + 2 * c[2] * W[3] * ws.Ax + c[1] * W[3] * ws.F2x
+            @. ws.bracket = Gk[1] * x + Gk[2] * ws.Ax + Gk[3] * ws.F2x
         end
         mul!(ws.Akbk, mats[k], ws.bracket)
         @. out += ws.Akbk
@@ -116,19 +136,17 @@ function _eff_hermite_apply_M!(out, x, mats, Aop, Adop, W, ed, ws, ::Val{S}) whe
 end
 
 # Callable applying x ↦ S_I x = x - M_I x, wrapped once in a LinearMap.  The
-# implicit-side operators (Aop, Adop) and control derivatives (ed) are refreshed in
-# place each step, so the same LinearMap and GMRES workspace are reused.
-mutable struct _EffControlledHermiteImplicit{S,MT,OT,WT,ET,WST}
+# implicit-side operators (Aop, Adop) and generators (ws.G) are refreshed in place
+# each step, so the same LinearMap and GMRES workspace are reused.
+mutable struct _EffControlledHermiteImplicit{S,MT,OT,WST}
     mats::MT
     Aop::OT
     Adop::OT
-    W::WT
-    ed::ET
     ws::WST
 end
 
 @inline function (ia::_EffControlledHermiteImplicit{S})(out, x) where {S}
-    _eff_hermite_apply_M!(out, x, ia.mats, ia.Aop, ia.Adop, ia.W, ia.ed, ia.ws, Val(S))
+    _eff_hermite_apply_M!(out, x, ia.mats, ia.Aop, ia.Adop, ia.ws, Val(S))
     @. out = x - out
     return out
 end
@@ -139,9 +157,10 @@ function _efficient_controlled_hermite_solve_dynamic(co, ψ0, Δt, nsteps, ::Val
     mats = co.matrices
     nmat = length(mats)
     wp = _efficient_dynamic_hermite_weights(Val(S), Δt)
-    ws = _EffControlledHermiteWS(N, nmat)
+    ws = _EffControlledHermiteWS(N, nmat, S + 1)
 
-    # Per-step control-derivative buffer: one SVector{S+1} per matrix.
+    # Per-step control-derivative buffer: one SVector{S+1} per matrix (feeds the
+    # generator build; not read by the apply itself).
     edbuf = Vector{SVector{S + 1,ComplexF64}}(undef, nmat)
 
     ψ = Vector{ComplexF64}(undef, N); ψ .= ψ0
@@ -149,8 +168,7 @@ function _efficient_controlled_hermite_solve_dynamic(co, ψ0, Δt, nsteps, ::Val
     # Reusable implicit operator + LinearMap + GMRES workspace (built once).
     Aop0 = evaluate(co, Δt, Derivative{0}())
     Adop0 = S >= 2 ? evaluate(co, Δt, Derivative{1}()) : Aop0
-    ia = _EffControlledHermiteImplicit{S,typeof(mats),typeof(Aop0),typeof(wp.WI),
-                                       typeof(edbuf),typeof(ws)}(mats, Aop0, Adop0, wp.WI, edbuf, ws)
+    ia = _EffControlledHermiteImplicit{S,typeof(mats),typeof(Aop0),typeof(ws)}(mats, Aop0, Adop0, ws)
     L = LinearMap{ComplexF64}(ia, N; ismutating = true)
     kws = Krylov.krylov_workspace(Val(:gmres), L, ws.rhs)
     _stats_init!(stats, nsteps, true)
@@ -168,13 +186,16 @@ function _efficient_controlled_hermite_solve_dynamic(co, ψ0, Δt, nsteps, ::Val
         AE = evaluate(co, t_n, Derivative{0}())
         AdE = S >= 2 ? evaluate(co, t_n, Derivative{1}()) : AE
         _write_env_derivs!(edbuf, co.controls, t_n, DerivativeUpTo{S}())
-        _eff_hermite_apply_M!(ws.Mψ, ψ, mats, AE, AdE, wp.WE, edbuf, ws, Val(S))
+        _build_hermite_generators!(ws.G, wp.WE, edbuf, Val(S))
+        _eff_hermite_apply_M!(ws.Mψ, ψ, mats, AE, AdE, ws, Val(S))
         @. ws.rhs = ψ + ws.Mψ
-        # implicit side:  refresh ia (operators + control derivatives at t_{n+1}),
-        # then solve (I - M_I) ψ_{n+1} = rhs matrix-free.  edbuf === ia.ed.
+        # implicit side:  refresh the operators at t_{n+1}, rebuild the implicit
+        # generators G_I (reused across GMRES iterations), then solve
+        # (I - M_I) ψ_{n+1} = rhs matrix-free.
         ia.Aop = evaluate(co, t_np1, Derivative{0}())
         ia.Adop = S >= 2 ? evaluate(co, t_np1, Derivative{1}()) : ia.Aop
         _write_env_derivs!(edbuf, co.controls, t_np1, DerivativeUpTo{S}())
+        _build_hermite_generators!(ws.G, wp.WI, edbuf, Val(S))
         warm_start && Krylov.warm_start!(kws, ψ)
         Krylov.gmres!(kws, L, ws.rhs; atol = atol, rtol = rtol)
         ψ .= Krylov.solution(kws)
