@@ -291,24 +291,24 @@ function make_workprecision_figure(df, methods; basename = "cnot3_workprecision_
           L"\textrm{CNOT3\;work-precision}\;\;(\textrm{%$(frame)\;frame})";
           fontsize = 13, padding = (0, 0, 6, 0))
     ax = Axis(fig[1, 1];
-              xlabel = "Solve time (s)", ylabel = "Final-time 2-norm error",
+              xlabel = "Final-time 2-norm error", ylabel = "Solve time (s)",
               xscale = log10, yscale = log10)
 
     # One point per run — exactly the convergence figure's point set (same
-    # ERROR_WINDOW / NSTEPS_WINDOW filter via curve_rows), but with CPU solve time
-    # on the x-axis.  Points are connected along the refinement path (curve_rows
-    # is sorted by nsteps), so error descends monotonically along each curve;
-    # where wall time is non-monotone in nsteps (the coarse-step GMRES cost
-    # spike), the line simply folds leftward rather than drawing a spurious
-    # upward spike (which a time-sorted connection would).
+    # ERROR_WINDOW / NSTEPS_WINDOW filter via curve_rows) — plotted as error (x)
+    # vs CPU solve time (y).  Points are connected along the refinement path
+    # (curve_rows is sorted by nsteps), so error descends monotonically (the curve
+    # marches leftward); where wall time is non-monotone in nsteps (the
+    # coarse-step GMRES cost spike), the line folds downward rather than drawing a
+    # spurious spike.  Lower-left is best: accurate AND cheap.
     for m in methods, (si, s) in enumerate(SVALS)
         r = curve_rows(df, m, s)
         isempty(r) && continue
-        scatterlines!(ax, Vector{Float64}(r.t_elapsed), Vector{Float64}(r[!, ERROR_COL]);
+        scatterlines!(ax, Vector{Float64}(r[!, ERROR_COL]), Vector{Float64}(r.t_elapsed);
                       color = METHOD_COLORS[m], marker = ORDER_MARKERS[si],
                       markersize = 9, linewidth = 1.5)
     end
-    ylims!(ax, ERROR_WINDOW[1] / 10, ERROR_WINDOW[2] * 10)
+    xlims!(ax, ERROR_WINDOW[1] / 10, ERROR_WINDOW[2] * 10)
 
     method_entries = [LineElement(color = METHOD_COLORS[m], linewidth = 2) for m in methods]
     order_entries  = [MarkerElement(marker = ORDER_MARKERS[j], color = :black, markersize = 9)
