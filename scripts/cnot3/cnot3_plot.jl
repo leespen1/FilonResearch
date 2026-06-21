@@ -58,13 +58,6 @@ const ORDER_MARKERS = (:circle, :rect, :diamond)
 # Errors outside this window are dropped before plotting: the upper bound hides
 # diverged coarse-step runs, the lower bound hides the round-off floor.
 const ERROR_WINDOW = (1e-13, 1e1)
-# Work-precision plots additionally drop everything coarser than this error: in
-# the pre-asymptotic / coarse-step-blowup regime the iterative solve thrashes
-# (GMRES needs many iterations on near-unstable steps), so wall time is *not*
-# monotone in nsteps there — the first stable run can be slower than finer, more
-# accurate ones, which folds the error-vs-time curve back on itself.  Restricting
-# to the converged regime gives the usual monotone work-precision curves.
-const WORKPRECISION_ERROR_MAX = 1e-1
 # Optionally restrict the timestep range, globally or per method.  `nothing`
 # means "no restriction".
 const NSTEPS_WINDOW = Dict{Symbol,Any}()   # e.g. :filon => (2^4, 2^14)
@@ -301,31 +294,21 @@ function make_workprecision_figure(df, methods; basename = "cnot3_workprecision_
               xlabel = "Solve time (s)", ylabel = "Final-time 2-norm error",
               xscale = log10, yscale = log10)
 
-    # Draw each method's EFFICIENCY FRONTIER: the lower-left Pareto set of
-    # (time, error).  Wall time is not monotone in nsteps near the coarse-step
-    # stability edge (GMRES thrashes there, so the first stable run can cost more
-    # than finer, more-accurate ones) and the error saturates/ticks up at the
-    # round-off floor — both produce points that are dominated (slower AND less
-    # accurate than another run of the same method).  Keeping only non-dominated
-    # points removes the spurious folds and shows the achievable accuracy-vs-cost
-    # tradeoff, which is the point of a work-precision diagram.
+    # One point per run — exactly the convergence figure's point set (same
+    # ERROR_WINDOW / NSTEPS_WINDOW filter via curve_rows), but with CPU solve time
+    # on the x-axis.  Points are connected along the refinement path (curve_rows
+    # is sorted by nsteps), so error descends monotonically along each curve;
+    # where wall time is non-monotone in nsteps (the coarse-step GMRES cost
+    # spike), the line simply folds leftward rather than drawing a spurious
+    # upward spike (which a time-sorted connection would).
     for m in methods, (si, s) in enumerate(SVALS)
         r = curve_rows(df, m, s)
-        r = r[r[!, ERROR_COL] .<= WORKPRECISION_ERROR_MAX, :]   # converged regime only
         isempty(r) && continue
-        t = Vector{Float64}(r.t_elapsed); e = Vector{Float64}(r[!, ERROR_COL])
-        ord = sortperm(t)
-        keep = Int[]; best = Inf
-        for i in ord
-            if e[i] < best
-                push!(keep, i); best = e[i]
-            end
-        end
-        scatterlines!(ax, t[keep], e[keep];
+        scatterlines!(ax, Vector{Float64}(r.t_elapsed), Vector{Float64}(r[!, ERROR_COL]);
                       color = METHOD_COLORS[m], marker = ORDER_MARKERS[si],
                       markersize = 9, linewidth = 1.5)
     end
-    ylims!(ax, ERROR_WINDOW[1] / 10, WORKPRECISION_ERROR_MAX * 10)
+    ylims!(ax, ERROR_WINDOW[1] / 10, ERROR_WINDOW[2] * 10)
 
     method_entries = [LineElement(color = METHOD_COLORS[m], linewidth = 2) for m in methods]
     order_entries  = [MarkerElement(marker = ORDER_MARKERS[j], color = :black, markersize = 9)
