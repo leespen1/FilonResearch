@@ -344,10 +344,50 @@ function make_workprecision_figure(df, methods; basename = "cnot3_workprecision_
     return fig
 end
 
+"""
+Mean GMRES iterations per step vs nsteps (log-log), for the iterative methods
+(QGD Hermite has no linear solve and is skipped).  Shows how hard the linear
+solve works: flat and small in the rotating frames, but pinned at the iteration
+cap in the lab-frame coarse-step blowup region and only dropping to a few once
+Δt is fine enough to make each step's system well-conditioned.
+"""
+function make_gmres_figure(df, methods; basename = "cnot3_gmres_$(frame)")
+    iter_methods = [m for m in methods if m != :hermite]
+    "avg_gmres" in names(df) || (println("  (no avg_gmres column; skipping GMRES figure)"); return nothing)
+    fig = Figure(size = (7.5inch, 4.6inch), fontsize = 11)
+    Label(fig[0, 1:2], L"\textrm{CNOT3\;GMRES\;iterations\;per\;step}\;\;(\textrm{%$(frame)\;frame})";
+          fontsize = 13, padding = (0, 0, 6, 0))
+    ax = Axis(fig[1, 1]; xlabel = "Number of timesteps",
+              ylabel = "Mean GMRES iterations / step", xscale = log10, yscale = log10)
+    for m in iter_methods, (si, s) in enumerate(SVALS)
+        sub = df[(df.method .== m) .& (df.s .== s), :]
+        sub = sub[.!ismissing.(sub.avg_gmres), :]
+        isempty(sub) && continue
+        sort!(sub, :nsteps)
+        scatterlines!(ax, Vector{Float64}(sub.nsteps), Vector{Float64}(sub.avg_gmres);
+                      color = METHOD_COLORS[m], marker = ORDER_MARKERS[si],
+                      markersize = 9, linewidth = 1.5)
+    end
+    method_entries = [LineElement(color = METHOD_COLORS[m], linewidth = 2) for m in iter_methods]
+    order_entries  = [MarkerElement(marker = ORDER_MARKERS[j], color = :black, markersize = 9)
+                      for j in 1:length(SVALS)]
+    Legend(fig[1, 2], [method_entries, order_entries],
+           [[METHOD_LABELS[m] for m in iter_methods], ["s=0", "s=1", "s=2"]],
+           ["Method", "Order"]; orientation = :vertical, tellheight = false, tellwidth = true)
+    colsize!(fig.layout, 1, Relative(0.72))
+    mkpath(plotsdir("cnot3"))
+    for ext in ("png", "svg", "pdf")
+        save(plotsdir("cnot3", "$(basename).$(ext)"), fig)
+    end
+    println("  saved → ", plotsdir("cnot3", "$(basename).{png,svg,pdf}"))
+    return fig
+end
+
 methods_present = [m for m in METHOD_ORDER if m in df.method]
 fig_conv = make_convergence_figure(df, methods_present)
 fig_time = make_timing_figure(df, methods_present)
 fig_dt   = make_stepsize_figure(df, methods_present)
 fig_wp   = make_workprecision_figure(df, methods_present)
+fig_gm   = make_gmres_figure(df, methods_present)
 println("Done.")
 fig_conv
