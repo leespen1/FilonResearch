@@ -39,6 +39,10 @@ end
     include("./test_efficient_controlled_hermite.jl")
 end
 
+@testset "Efficient Filon (A_k-factored regular Filon)" begin
+    include("./test_efficient_filon.jl")
+end
+
 @testset "Solve diagnostics (FilonSolveStats)" begin
     include("./test_solve_stats.jl")
 end

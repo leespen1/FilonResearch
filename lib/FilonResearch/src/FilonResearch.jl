@@ -81,4 +81,13 @@ include("efficient_controlled_hermite.jl")
 export efficient_controlled_hermite_solve, efficient_controlled_hermite_weights
 export DynamicEfficientControlledHermiteWeights
 
+# Efficient Filon: the A_k-factored (Appendix B) reorganization of regular Filon
+# WITHOUT carrier resolution — identical approximation to filon_solve_hardcoded
+# but with dense matvecs (s+1)·nHam (the ω ≠ 0 generalization of efficient
+# controlled Hermite).  Reuses the efficient-controlled-Filon apply machinery, so
+# it must be included after efficient_controlled_filon.jl and hardcoded_filon.jl.
+include("efficient_filon.jl")
+export efficient_filon_solve, efficient_filon_weights
+export DynamicEfficientFilonWeights
+
 end # module FilonResearch
