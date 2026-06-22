@@ -135,25 +135,31 @@ function make_convergence_figure(df, methods; basename = "cnot3_convergence_$(fr
               xlabel = "Number of timesteps", ylabel = "Final-time 2-norm error",
               xscale = log10, yscale = log10)
 
-    # Global nsteps span (for guide lines).
-    all_n = Float64[]
+    # Plotted-data extent, used both for axis limits and to bound the guides.
+    all_n = Float64[]; all_e = Float64[]
     for m in methods, s in SVALS
-        n, _ = curve(df, m, s); append!(all_n, n)
+        n, e = curve(df, m, s); append!(all_n, n); append!(all_e, e)
     end
     isempty(all_n) && error("Nothing to plot after filtering.")
-    nfine = exp10.(range(log10(minimum(all_n)), log10(maximum(all_n)), length = 200))
 
-    # O(Δtᵖ) guide, anchored to the first method/order with data.
-    for (si, s) in enumerate(SVALS)
+    # O(Δtᵖ) guides: a least-squares slope-p fit to each order's steep
+    # (converging, not-yet-floored) data, drawn only over that data's nsteps
+    # range — so the reference line hugs the curves instead of floating across the
+    # whole panel.
+    for s in SVALS
         p = 2 * (s + 1)
+        ns = Float64[]; es = Float64[]
         for m in methods
-            n, e = curve(df, m, s)
-            isempty(n) && continue
-            C = e[1] * n[1]^p
-            lines!(ax, nfine, C ./ (nfine .^ p);
-                   color = :gray, linestyle = :dot, linewidth = 1.5)
-            break
+            n, e = curve(df, m, s); append!(ns, n); append!(es, e)
         end
+        isempty(ns) && continue
+        steep = es .> 3 * minimum(es)          # drop the flat round-off floor
+        count(steep) >= 2 || (steep = trues(length(es)))
+        nc = ns[steep]; ec = es[steep]
+        logC = sum(log.(ec) .+ p .* log.(nc)) / length(nc)   # best slope-p offset
+        nspan = exp10.(range(log10(minimum(nc)), log10(maximum(nc)), length = 50))
+        lines!(ax, nspan, exp(logC) ./ (nspan .^ p);
+               color = :gray, linestyle = :dot, linewidth = 1.5)
     end
 
     for m in methods, (si, s) in enumerate(SVALS)
@@ -163,9 +169,9 @@ function make_convergence_figure(df, methods; basename = "cnot3_convergence_$(fr
                       markersize = 9, linewidth = 1.5)
     end
 
-    # The guide lines extend far below any data; without explicit limits they
-    # drag the y-axis down by many decades and squash the curves.
-    ylims!(ax, ERROR_WINDOW[1] / 10, ERROR_WINDOW[2] * 10)
+    # Tight limits around the actual data (small log-margin) — no dead whitespace.
+    xlims!(ax, minimum(all_n) / 1.4, maximum(all_n) * 1.4)
+    ylims!(ax, minimum(all_e) / 3, maximum(all_e) * 3)
 
     method_entries = [LineElement(color = METHOD_COLORS[m], linewidth = 2) for m in methods]
     order_entries  = [MarkerElement(marker = ORDER_MARKERS[j], color = :black, markersize = 9)
@@ -367,7 +373,10 @@ function make_gmres_figure(df, methods; basename = "cnot3_gmres_$(frame)")
 end
 
 methods_present = [m for m in METHOD_ORDER if m in df.method]
-fig_conv = make_convergence_figure(df, methods_present)
+# The convergence panel shows only the three primary competitors; the other
+# figures keep the full method set.
+conv_methods = [m for m in methods_present if m != :controlled_hermite]
+fig_conv = make_convergence_figure(df, conv_methods)
 fig_time = make_timing_figure(df, methods_present)
 fig_dt   = make_stepsize_figure(df, methods_present)
 fig_wp   = make_workprecision_figure(df, methods_present)
