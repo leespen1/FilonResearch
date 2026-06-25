@@ -98,7 +98,9 @@ end
 function vern9_reference(frame)
     cfg = Dict("frame" => string(frame), "abstol" => 1e-13, "reltol" => 1e-13,
                "Nosc" => NOSC, "Nguard" => NGUARD, "Tmax" => TMAX)
-    data, _ = produce_or_load(cfg, datadir(prefix, commit);
+    # Cache in a SEPARATE data dir (not under the run prefix) so collect_results
+    # over the run data never picks these reference files up.
+    data, _ = produce_or_load(cfg, datadir("cnot3_vern9ref", commit);
                               prefix = "cnot3_vern9ref", tag = false) do _
         println("  computing Vern9 reference for frame=", frame, " (this is the slow step)")
         @strdict uref = compute_vern9_reference(frame)
@@ -110,7 +112,9 @@ end
 # Data: per-frame DataFrame with final-time error vs the frame's Vern9 reference.
 # -----------------------------------------------------------------------------
 function frame_errors(df_all, frame, uref)
-    df = df_all[(df_all.initialCondition .== init) .& (df_all.frame .== string(frame)), :]
+    # isequal (not .==) so any non-run rows with `missing` columns filter out cleanly.
+    mask = isequal.(df_all.initialCondition, init) .& isequal.(df_all.frame, string(frame))
+    df = df_all[mask, :]
     isempty(df) && error("No runs for frame=$frame, init=$init in $datapath")
     Tmax = first(df).Tmax
     df = copy(df)
