@@ -5,13 +5,16 @@
 # A combined two-panel convergence figure (lab and RWA frames, sharing a y-axis)
 # in the same style as scripts/rabi_oscillator/rabi_frames_convergence.jl: paper
 # sized (SIAM single column), method = colour + linestyle, order s = marker, Δt
-# on the x-axis, a horizontal three-section legend below, saved as a vector PDF
-# (plus a PNG preview) to both the DrWatson plots dir and the Overleaf Figures dir.
+# on the x-axis, a horizontal legend below, saved as a vector PDF (plus a PNG
+# preview) to both the DrWatson plots dir and the Overleaf Figures dir.
 #
-# Reads the per-run data produced by cnot3_convergence_collect_data.jl (one frame
-# at a time, each with its own finest-run reference) and shows three methods:
-# Hermite (QGD), Filon, Controlled Filon.  The exploratory per-frame multi-figure
-# script (cnot3_plot.jl) is left untouched.
+# Reference: like the Rabi figure, each frame's error is measured against a Vern9
+# (adaptive RK) solution of that frame's own ODE at abstol=reltol=1e-13 — an
+# independent reference, not the finest Hermite run.  The RWA modeling error (the
+# firebrick ceiling) is the Vern9 RWA-frame vs Vern9 no-RWA-frame final-state
+# difference: the two solve the same rotating-frame dynamics differing only by the
+# dropped counter-rotating terms, so their separation at T is the accuracy floor
+# no RWA-frame computation can beat.  The Vern9 references are cached.
 #
 # Run (data is commit-namespaced; point at the collection commit):
 #   CNOT3_COMMIT=46407571d844c93a725b139e763f21dfa1bc1fcc \
@@ -24,6 +27,12 @@ using DrWatson
 using DataFrames
 using LinearAlgebra
 using CairoMakie
+using FilonResearch
+using QuantumGateDesign
+using OrdinaryDiffEqVerner
+
+# Problem builders + make_initial_condition + qgd_to_controlled_operator.
+include(srcdir("cnot3_run.jl"))
 
 CairoMakie.set_theme!(CairoMakie.theme_latexfonts())
 
@@ -32,15 +41,23 @@ const commit   = get(ENV, "CNOT3_COMMIT", gitdescribe(projectdir()))
 const datapath = datadir(prefix, commit)
 const init     = get(ENV, "CNOT3_INIT", "basis")
 
+# Problem size (must match the collected sweep).
+const NOSC = 10
+const NGUARD = 2
+const TMAX = 550.0
+
 # Method = colour + linestyle (so coincident curves stay distinct), order = marker.
-const METHODS = (:filon, :controlled_filon, :hermite)        # display / legend order
+# "Hermite" here is the efficient controlled-Hermite method (the ω=0 Filon), which
+# is numerically identical to the regular Hermite method but runs on the same
+# ControlledOperator path as the Filon methods.
+const METHODS = (:filon, :controlled_filon, :controlled_hermite)   # display / legend order
 const METHOD_LABELS = Dict(:filon => "Filon", :controlled_filon => "Controlled Filon",
-                           :hermite => "Hermite (QGD)")
-const METHOD_COLOR = Dict(:filon            => Makie.wong_colors()[1],   # blue
-                          :controlled_filon => Makie.wong_colors()[2],   # orange
-                          :hermite          => Makie.wong_colors()[3])   # green
+                           :controlled_hermite => "Hermite")
+const METHOD_COLOR = Dict(:filon              => Makie.wong_colors()[1],   # blue
+                          :controlled_filon   => Makie.wong_colors()[2],   # orange
+                          :controlled_hermite => Makie.wong_colors()[3])   # green
 const METHOD_LS = Dict(:filon => :solid, :controlled_filon => (:dash, 1.0),
-                       :hermite => (:dashdot, 1.0))
+                       :controlled_hermite => (:dashdot, 1.0))
 const SVALS = (0, 1, 2)
 const ORDER_MARKERS = (:circle, :rect, :diamond)
 
@@ -52,19 +69,53 @@ const PAPER_PT_PER_IN = 72
 const PAPER_WIDTH_IN  = 5.125
 
 # -----------------------------------------------------------------------------
-# Data: per-frame DataFrame with a final-time error column vs that frame's
-# finest run (largest order, then deepest nsteps).
+# Vern9 reference: solve dψ/dt = A(t)ψ on a frame's own ODE at 1e-13, one column
+# per essential gate state, returning the stacked final state (matches the
+# collected history[:, end] layout).  Cached per frame in the campaign data dir.
 # -----------------------------------------------------------------------------
-function frame_errors(frame)
-    df = collect_results(datapath)
-    df = df[(df.initialCondition .== init) .& (df.frame .== frame), :]
+function compute_vern9_reference(frame; abstol = 1e-13, reltol = 1e-13)
+    fr = Symbol(frame)
+    qgd_prob = cnot3_hoho_qgd_prob(N_osc_levels = NOSC, N_guard_levels = NGUARD,
+                                   Tmax = TMAX, frame = fr)
+    controls, pcof = cnot3_hoho_controls_and_pcof(frame = fr)
+    co = qgd_to_controlled_operator(qgd_prob, controls, pcof)   # A(t) = Σ cₖ(t) Aₖ
+    ic = make_initial_condition("basis", qgd_prob)              # N_tot × N_ess
+    op = Operator(co, 0.0)                                      # reusable A(t) buffer
+    function rhs!(du, u, p, t)
+        evaluate!(op, co, t)                                   # refresh A(t) in place
+        mul!(du, op, u)
+        return nothing
+    end
+    finals = map(eachcol(ic)) do c
+        u0 = ComplexF64.(Vector(c))
+        sol = solve(ODEProblem(rhs!, u0, (0.0, TMAX)), Vern9();
+                    abstol = abstol, reltol = reltol, save_everystep = false)
+        Vector{ComplexF64}(sol.u[end])
+    end
+    return reduce(vcat, finals)
+end
+
+function vern9_reference(frame)
+    cfg = Dict("frame" => string(frame), "abstol" => 1e-13, "reltol" => 1e-13,
+               "Nosc" => NOSC, "Nguard" => NGUARD, "Tmax" => TMAX)
+    data, _ = produce_or_load(cfg, datadir(prefix, commit);
+                              prefix = "cnot3_vern9ref", tag = false) do _
+        println("  computing Vern9 reference for frame=", frame, " (this is the slow step)")
+        @strdict uref = compute_vern9_reference(frame)
+    end
+    return data["uref"]
+end
+
+# -----------------------------------------------------------------------------
+# Data: per-frame DataFrame with final-time error vs the frame's Vern9 reference.
+# -----------------------------------------------------------------------------
+function frame_errors(df_all, frame, uref)
+    df = df_all[(df_all.initialCondition .== init) .& (df_all.frame .== string(frame)), :]
     isempty(df) && error("No runs for frame=$frame, init=$init in $datapath")
-    df.method = Symbol.(df.method)
-    sort!(df, [:s, :nsteps], rev = true)             # finest = highest order, deepest
-    ref = first(df)
-    uref = ref.history[:, end]
+    Tmax = first(df).Tmax
+    df = copy(df)
     df.final_error = [norm(h[:, end] .- uref) for h in df.history]
-    return df, ref.Tmax, ref
+    return df, Tmax
 end
 
 "(Δt, error) for one (method, s): ERROR_WINDOW-filtered, sorted by nsteps."
@@ -77,12 +128,13 @@ function curve(df, Tmax, m, s)
     return Tmax ./ Vector{Float64}(sub.nsteps), Vector{Float64}(sub.final_error)
 end
 
-"Draw one frame's curves on `ax`: O(Δtᵖ) slope guides (grey dotted) plus the
-method × order scatter-lines (method = colour+linestyle, order s = marker)."
-function plot_frame!(ax, df, Tmax; methods = METHODS)
+"Draw one frame's curves on `ax`: the RWA modeling-error ceiling (firebrick),
+O(Δtᵖ) slope guides (grey dotted), then method × order scatter-lines."
+function plot_frame!(ax, df, Tmax, rwa_error; methods = METHODS)
+    rwa_error === nothing ||
+        hlines!(ax, rwa_error; color = :firebrick, linestyle = :dot, linewidth = 1.5)
     # O(Δtᵖ) guide per order: least-squares slope-p fit (error ≈ C·Δtᵖ) over that
-    # order's steep, not-yet-floored data, drawn only across that data's Δt range
-    # so it hugs the curves.
+    # order's steep, not-yet-floored data, drawn only across that data's Δt range.
     for s in SVALS
         p = 2 * (s + 1)
         dts = Float64[]; es = Float64[]
@@ -111,15 +163,24 @@ end
 # Combined figure
 # -----------------------------------------------------------------------------
 function make_combined_figure(; basename = "cnot3_convergence_labrwa")
-    df_lab, T_lab, ref_lab = frame_errors("lab")
-    df_rwa, T_rwa, _        = frame_errors("rwa")
+    # Independent Vern9 references (cached); RWA modeling error = RWA vs no-RWA.
+    uref_lab   = vern9_reference("lab")
+    uref_rwa   = vern9_reference("rwa")
+    uref_norwa = vern9_reference("norwa")
+    rwa_error  = norm(uref_rwa .- uref_norwa)
+    println("RWA modeling error (Vern9 RWA vs no-RWA at T): ", round(rwa_error; sigdigits = 4))
+
+    df_all = collect_results(datapath)
+    df_all.method = Symbol.(df_all.method)
+    df_lab, T_lab = frame_errors(df_all, "lab", uref_lab)
+    df_rwa, T_rwa = frame_errors(df_all, "rwa", uref_rwa)
 
     # y range / even-power ticks from the plotted (filtered) data of both panels.
     allE = Float64[]
     for (df, T) in ((df_lab, T_lab), (df_rwa, T_rwa)), m in METHODS, s in SVALS
         _, e = curve(df, T, m, s); append!(allE, e)
     end
-    lo = floor(Int, log10(minimum(allE))); hi = ceil(Int, log10(maximum(allE)))
+    lo = floor(Int, log10(min(minimum(allE), rwa_error))); hi = ceil(Int, log10(maximum(allE)))
     iseven(lo) || (lo -= 1)
     ypows = lo:2:hi
     yticks = (10.0 .^ ypows, [L"10^{%$p}" for p in ypows])
@@ -135,8 +196,8 @@ function make_combined_figure(; basename = "cnot3_convergence_labrwa")
     ax_rwa = Axis(fig[2, 2]; title = "RWA Frame", xlabel = L"\Delta t",
                   xscale = log10, yscale = log10, yticks = yticks,
                   limits = (nothing, ylims))
-    plot_frame!(ax_lab, df_lab, T_lab)
-    plot_frame!(ax_rwa, df_rwa, T_rwa)
+    plot_frame!(ax_lab, df_lab, T_lab, rwa_error)
+    plot_frame!(ax_rwa, df_rwa, T_rwa, rwa_error)
     linkyaxes!(ax_lab, ax_rwa)
     hideydecorations!(ax_rwa, grid = false)
 
@@ -145,11 +206,13 @@ function make_combined_figure(; basename = "cnot3_convergence_labrwa")
     order_entries  = [MarkerElement(marker = ORDER_MARKERS[si], color = :black, markersize = 8)
                       for si in 1:length(SVALS)]
     order_labels = [L"s=%$(s)\;(\mathcal{O}(\Delta t^{%$(2(s+1))}))" for s in SVALS]
-    slope_entry = [LineElement(color = :gray, linestyle = :dot, linewidth = 2)]
+    ref_entries = [LineElement(color = :gray, linestyle = :dot, linewidth = 2),
+                   LineElement(color = :firebrick, linestyle = :dot, linewidth = 2)]
+    ref_labels = [L"\mathcal{O}(\Delta t^p)", "RWA error"]
     Legend(fig[3, 1:2],
-           [method_entries, order_entries, slope_entry],
-           [[METHOD_LABELS[m] for m in METHODS], order_labels, [L"\mathcal{O}(\Delta t^p)"]],
-           ["Method", "Order", "Slope"];
+           [method_entries, order_entries, ref_entries],
+           [[METHOD_LABELS[m] for m in METHODS], order_labels, ref_labels],
+           ["Method", "Order", "Reference"];
            orientation = :horizontal, framevisible = true, titleposition = :left,
            nbanks = 3, patchsize = (14f0, 8f0), colgap = 5, titlegap = 4,
            labelsize = 7, titlesize = 7, padding = (4f0, 4f0, 3f0, 3f0))
