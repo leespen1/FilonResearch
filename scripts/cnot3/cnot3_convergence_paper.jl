@@ -133,27 +133,10 @@ function curve(df, Tmax, m, s)
 end
 
 "Draw one frame's curves on `ax`: the RWA modeling-error ceiling (firebrick),
-O(Δtᵖ) slope guides (grey dotted), then method × order scatter-lines."
+then method × order scatter-lines."
 function plot_frame!(ax, df, Tmax, rwa_error; methods = METHODS)
     rwa_error === nothing ||
         hlines!(ax, rwa_error; color = :firebrick, linestyle = :dot, linewidth = 1.5)
-    # O(Δtᵖ) guide per order: least-squares slope-p fit (error ≈ C·Δtᵖ) over that
-    # order's steep, not-yet-floored data, drawn only across that data's Δt range.
-    for s in SVALS
-        p = 2 * (s + 1)
-        dts = Float64[]; es = Float64[]
-        for m in methods
-            d, e = curve(df, Tmax, m, s); append!(dts, d); append!(es, e)
-        end
-        isempty(dts) && continue
-        steep = es .> 3 * minimum(es)
-        count(steep) >= 2 || (steep = trues(length(es)))
-        dc = dts[steep]; ec = es[steep]
-        logC = sum(log.(ec) .- p .* log.(dc)) / length(dc)   # error = C·Δtᵖ
-        dspan = exp10.(range(log10(minimum(dc)), log10(maximum(dc)), length = 50))
-        lines!(ax, dspan, exp(logC) .* (dspan .^ p);
-               color = :gray, linestyle = :dot, linewidth = 1.2)
-    end
     for m in methods, (si, s) in enumerate(SVALS)
         d, e = curve(df, Tmax, m, s)
         isempty(d) && continue
@@ -181,27 +164,33 @@ function make_combined_figure(; basename = "cnot3_convergence_labrwa")
     df_lab, T_lab = frame_errors(df_all, "lab", uref_lab)
     df_rwa, T_rwa = frame_errors(df_all, "rwa", uref_rwa)
 
-    # y range / even-power ticks from the plotted (filtered) data of both panels.
-    allE = Float64[]
+    # Axis window: crop the coarse-Δt blowup band on the right (just past Δt = 1)
+    # and floor the y-axis at 1e-8.
+    XMAX = 1.5
+    YMIN = 1e-8
+    # y top from the data visible within the x-window (even power above it).
+    visE = Float64[]
     for (df, T) in ((df_lab, T_lab), (df_rwa, T_rwa)), m in METHODS, s in SVALS
-        _, e = curve(df, T, m, s); append!(allE, e)
+        d, e = curve(df, T, m, s)
+        for i in eachindex(d)
+            d[i] <= XMAX && push!(visE, e[i])
+        end
     end
-    lo = floor(Int, log10(min(minimum(allE), rwa_error))); hi = ceil(Int, log10(maximum(allE)))
-    iseven(lo) || (lo -= 1)
-    ypows = lo:2:hi
+    hi = ceil(Int, log10(maximum(visE)))
+    ypows = -8:2:hi
     yticks = (10.0 .^ ypows, [L"10^{%$p}" for p in ypows])
-    ylims = (10.0^lo / 3, 10.0^hi * 3)
+    ylims = (YMIN, 10.0^hi)
 
     W = PAPER_WIDTH_IN * PAPER_PT_PER_IN
     fig = Figure(size = (W, 240), fontsize = 8, figure_padding = (2, 3, 2, 2))
     Label(fig[1, 1:2], "CNOT3 Gate Convergence"; fontsize = 10, font = :bold)
 
     ax_lab = Axis(fig[2, 1]; title = "Lab Frame", xlabel = L"\Delta t",
-                  ylabel = "Final-time 2-norm error", xscale = log10, yscale = log10,
-                  yticks = yticks, limits = (nothing, ylims))
+                  ylabel = "Final-Time 2-Norm Error", xscale = log10, yscale = log10,
+                  yticks = yticks, limits = ((nothing, XMAX), ylims))
     ax_rwa = Axis(fig[2, 2]; title = "RWA Frame", xlabel = L"\Delta t",
                   xscale = log10, yscale = log10, yticks = yticks,
-                  limits = (nothing, ylims))
+                  limits = ((nothing, XMAX), ylims))
     plot_frame!(ax_lab, df_lab, T_lab, rwa_error)
     plot_frame!(ax_rwa, df_rwa, T_rwa, rwa_error)
     linkyaxes!(ax_lab, ax_rwa)
@@ -212,13 +201,11 @@ function make_combined_figure(; basename = "cnot3_convergence_labrwa")
     order_entries  = [MarkerElement(marker = ORDER_MARKERS[si], color = :black, markersize = 8)
                       for si in 1:length(SVALS)]
     order_labels = [L"s=%$(s)\;(\mathcal{O}(\Delta t^{%$(2(s+1))}))" for s in SVALS]
-    ref_entries = [LineElement(color = :gray, linestyle = :dot, linewidth = 2),
-                   LineElement(color = :firebrick, linestyle = :dot, linewidth = 2)]
-    ref_labels = [L"\mathcal{O}(\Delta t^p)", "RWA error"]
+    modeling_entries = [LineElement(color = :firebrick, linestyle = :dot, linewidth = 2)]
     Legend(fig[3, 1:2],
-           [method_entries, order_entries, ref_entries],
-           [[METHOD_LABELS[m] for m in METHODS], order_labels, ref_labels],
-           ["Method", "Order", "Reference"];
+           [method_entries, order_entries, modeling_entries],
+           [[METHOD_LABELS[m] for m in METHODS], order_labels, ["RWA Error"]],
+           ["Method", "Order", "Modeling"];
            orientation = :horizontal, framevisible = true, titleposition = :left,
            nbanks = 3, patchsize = (14f0, 8f0), colgap = 5, titlegap = 4,
            labelsize = 7, titlesize = 7, padding = (4f0, 4f0, 3f0, 3f0))
