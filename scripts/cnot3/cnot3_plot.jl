@@ -41,11 +41,12 @@ const init = get(ENV, "CNOT3_INIT", "basis")
 const frame = get(ENV, "CNOT3_FRAME", "rwa")
 
 # Display order / labels / styling for the methods.
-const METHOD_ORDER  = (:hermite, :filon, :controlled_filon)
+const METHOD_ORDER  = (:hermite, :filon, :controlled_filon, :controlled_hermite)
 const METHOD_LABELS = Dict(
-    :hermite          => "Hermite (QGD)",
-    :filon            => "Filon",
-    :controlled_filon => "Controlled-Filon",
+    :hermite            => "Hermite (QGD)",
+    :filon              => "Filon",
+    :controlled_filon   => "Controlled-Filon",
+    :controlled_hermite => "Controlled-Hermite",
 )
 const SVALS         = (0, 1, 2)
 const METHOD_COLORS = Dict(m => c for (m, c) in zip(METHOD_ORDER, Makie.wong_colors()))
@@ -100,8 +101,8 @@ const ERROR_COL = :final_error
 # Plotting
 # -----------------------------------------------------------------------------
 
-"Rows for one (method, s), filtered and sorted by nsteps, as (nsteps, error)."
-function curve(df, method, s; error_col = ERROR_COL)
+"Sub-DataFrame for one (method, s): NSTEPS_WINDOW- and ERROR_WINDOW-filtered, sorted by nsteps."
+function curve_rows(df, method, s; error_col = ERROR_COL)
     sub = df[(df.method .== method) .& (df.s .== s), :]
     win = get(NSTEPS_WINDOW, method, nothing)
     if win !== nothing
@@ -111,6 +112,12 @@ function curve(df, method, s; error_col = ERROR_COL)
     keep = (err .>= ERROR_WINDOW[1]) .& (err .<= ERROR_WINDOW[2]) .& isfinite.(err)
     sub = sub[keep, :]
     sort!(sub, :nsteps)
+    return sub
+end
+
+"Rows for one (method, s), filtered and sorted by nsteps, as (nsteps, error)."
+function curve(df, method, s; error_col = ERROR_COL)
+    sub = curve_rows(df, method, s; error_col)
     return Vector{Float64}(sub.nsteps), Vector{Float64}(sub[!, error_col])
 end
 
@@ -128,25 +135,31 @@ function make_convergence_figure(df, methods; basename = "cnot3_convergence_$(fr
               xlabel = "Number of timesteps", ylabel = "Final-time 2-norm error",
               xscale = log10, yscale = log10)
 
-    # Global nsteps span (for guide lines).
-    all_n = Float64[]
+    # Plotted-data extent, used both for axis limits and to bound the guides.
+    all_n = Float64[]; all_e = Float64[]
     for m in methods, s in SVALS
-        n, _ = curve(df, m, s); append!(all_n, n)
+        n, e = curve(df, m, s); append!(all_n, n); append!(all_e, e)
     end
     isempty(all_n) && error("Nothing to plot after filtering.")
-    nfine = exp10.(range(log10(minimum(all_n)), log10(maximum(all_n)), length = 200))
 
-    # O(Δtᵖ) guide, anchored to the first method/order with data.
-    for (si, s) in enumerate(SVALS)
+    # O(Δtᵖ) guides: a least-squares slope-p fit to each order's steep
+    # (converging, not-yet-floored) data, drawn only over that data's nsteps
+    # range — so the reference line hugs the curves instead of floating across the
+    # whole panel.
+    for s in SVALS
         p = 2 * (s + 1)
+        ns = Float64[]; es = Float64[]
         for m in methods
-            n, e = curve(df, m, s)
-            isempty(n) && continue
-            C = e[1] * n[1]^p
-            lines!(ax, nfine, C ./ (nfine .^ p);
-                   color = :gray, linestyle = :dot, linewidth = 1.5)
-            break
+            n, e = curve(df, m, s); append!(ns, n); append!(es, e)
         end
+        isempty(ns) && continue
+        steep = es .> 3 * minimum(es)          # drop the flat round-off floor
+        count(steep) >= 2 || (steep = trues(length(es)))
+        nc = ns[steep]; ec = es[steep]
+        logC = sum(log.(ec) .+ p .* log.(nc)) / length(nc)   # best slope-p offset
+        nspan = exp10.(range(log10(minimum(nc)), log10(maximum(nc)), length = 50))
+        lines!(ax, nspan, exp(logC) ./ (nspan .^ p);
+               color = :gray, linestyle = :dot, linewidth = 1.5)
     end
 
     for m in methods, (si, s) in enumerate(SVALS)
@@ -156,9 +169,9 @@ function make_convergence_figure(df, methods; basename = "cnot3_convergence_$(fr
                       markersize = 9, linewidth = 1.5)
     end
 
-    # The guide lines extend far below any data; without explicit limits they
-    # drag the y-axis down by many decades and squash the curves.
-    ylims!(ax, ERROR_WINDOW[1] / 10, ERROR_WINDOW[2] * 10)
+    # Tight limits around the actual data (small log-margin) — no dead whitespace.
+    xlims!(ax, minimum(all_n) / 1.4, maximum(all_n) * 1.4)
+    ylims!(ax, minimum(all_e) / 3, maximum(all_e) * 3)
 
     method_entries = [LineElement(color = METHOD_COLORS[m], linewidth = 2) for m in methods]
     order_entries  = [MarkerElement(marker = ORDER_MARKERS[j], color = :black, markersize = 9)
@@ -211,8 +224,162 @@ function make_timing_figure(df, methods; basename = "cnot3_timing_$(frame)")
     return fig
 end
 
+"""
+Convergence panel against the time step Δt = Tmax/nsteps (instead of nsteps):
+error decreases as Δt → 0 (curves descend to the left), with O(Δtᵖ) guides.
+"""
+function make_stepsize_figure(df, methods; basename = "cnot3_stepsize_$(frame)")
+    fig = Figure(size = (7.5inch, 4.6inch), fontsize = 11)
+    Label(fig[0, 1:2],
+          L"\textrm{CNOT3\;gate\;convergence}\;\;(N_{\mathrm{osc}}=%$(ref.nOscLevels),\;T=%$(Tmax),\;\textrm{%$(frame)\;frame})";
+          fontsize = 13, padding = (0, 0, 6, 0))
+    ax = Axis(fig[1, 1];
+              xlabel = L"Time step $\Delta t$", ylabel = "Final-time 2-norm error",
+              xscale = log10, yscale = log10)
+
+    all_dt = Float64[]
+    for m in methods, s in SVALS
+        r = curve_rows(df, m, s); append!(all_dt, Tmax ./ r.nsteps)
+    end
+    isempty(all_dt) && error("Nothing to plot after filtering.")
+    dtfine = exp10.(range(log10(minimum(all_dt)), log10(maximum(all_dt)), length = 200))
+
+    # O(Δtᵖ) guide, anchored to the first method/order with data.
+    for s in SVALS
+        p = 2 * (s + 1)
+        for m in methods
+            r = curve_rows(df, m, s); isempty(r) && continue
+            dt = Tmax ./ r.nsteps; e = r[!, ERROR_COL]
+            C = e[1] / dt[1]^p
+            lines!(ax, dtfine, C .* dtfine .^ p;
+                   color = :gray, linestyle = :dot, linewidth = 1.5)
+            break
+        end
+    end
+
+    for m in methods, (si, s) in enumerate(SVALS)
+        r = curve_rows(df, m, s); isempty(r) && continue
+        scatterlines!(ax, Tmax ./ r.nsteps, Vector{Float64}(r[!, ERROR_COL]);
+                      color = METHOD_COLORS[m], marker = ORDER_MARKERS[si],
+                      markersize = 9, linewidth = 1.5)
+    end
+    ylims!(ax, ERROR_WINDOW[1] / 10, ERROR_WINDOW[2] * 10)
+
+    method_entries = [LineElement(color = METHOD_COLORS[m], linewidth = 2) for m in methods]
+    order_entries  = [MarkerElement(marker = ORDER_MARKERS[j], color = :black, markersize = 9)
+                      for j in 1:length(SVALS)]
+    ref_entry      = [LineElement(color = :gray, linestyle = :dot, linewidth = 1.5)]
+    Legend(fig[1, 2],
+           [method_entries, order_entries, ref_entry],
+           [[METHOD_LABELS[m] for m in methods],
+            [L"s=0\;(O(\Delta t^2))", L"s=1\;(O(\Delta t^4))", L"s=2\;(O(\Delta t^6))"],
+            [L"O(\Delta t^p)\;\textrm{guide}"]],
+           ["Method", "Order", "Slope"],
+           orientation = :vertical, tellheight = false, tellwidth = true)
+    colsize!(fig.layout, 1, Relative(0.72))
+
+    mkpath(plotsdir("cnot3"))
+    for ext in ("png", "svg", "pdf")
+        save(plotsdir("cnot3", "$(basename).$(ext)"), fig)
+    end
+    println("  saved → ", plotsdir("cnot3", "$(basename).{png,svg,pdf}"))
+    return fig
+end
+
+"""
+Work–precision (efficiency) diagram: final-time error vs wall-clock solve time,
+log-log.  Down-and-to-the-left is better (accurate AND cheap); the leftmost
+curve at a given error level is the most efficient method.
+"""
+function make_workprecision_figure(df, methods; basename = "cnot3_workprecision_$(frame)")
+    fig = Figure(size = (7.5inch, 4.6inch), fontsize = 11)
+    Label(fig[0, 1:2],
+          L"\textrm{CNOT3\;work-precision}\;\;(\textrm{%$(frame)\;frame})";
+          fontsize = 13, padding = (0, 0, 6, 0))
+    ax = Axis(fig[1, 1];
+              xlabel = "Final-time 2-norm error", ylabel = "Solve time (s)",
+              xscale = log10, yscale = log10)
+
+    # One point per run — exactly the convergence figure's point set (same
+    # ERROR_WINDOW / NSTEPS_WINDOW filter via curve_rows) — plotted as error (x)
+    # vs CPU solve time (y).  Points are connected along the refinement path
+    # (curve_rows is sorted by nsteps), so error descends monotonically (the curve
+    # marches leftward); where wall time is non-monotone in nsteps (the
+    # coarse-step GMRES cost spike), the line folds downward rather than drawing a
+    # spurious spike.  Lower-left is best: accurate AND cheap.
+    for m in methods, (si, s) in enumerate(SVALS)
+        r = curve_rows(df, m, s)
+        isempty(r) && continue
+        scatterlines!(ax, Vector{Float64}(r[!, ERROR_COL]), Vector{Float64}(r.t_elapsed);
+                      color = METHOD_COLORS[m], marker = ORDER_MARKERS[si],
+                      markersize = 9, linewidth = 1.5)
+    end
+    xlims!(ax, ERROR_WINDOW[1] / 10, ERROR_WINDOW[2] * 10)
+
+    method_entries = [LineElement(color = METHOD_COLORS[m], linewidth = 2) for m in methods]
+    order_entries  = [MarkerElement(marker = ORDER_MARKERS[j], color = :black, markersize = 9)
+                      for j in 1:length(SVALS)]
+    Legend(fig[1, 2], [method_entries, order_entries],
+           [[METHOD_LABELS[m] for m in methods],
+            [L"s=0\;(O(\Delta t^2))", L"s=1\;(O(\Delta t^4))", L"s=2\;(O(\Delta t^6))"]],
+           ["Method", "Order"]; orientation = :vertical, tellheight = false, tellwidth = true)
+    colsize!(fig.layout, 1, Relative(0.72))
+
+    mkpath(plotsdir("cnot3"))
+    for ext in ("png", "svg", "pdf")
+        save(plotsdir("cnot3", "$(basename).$(ext)"), fig)
+    end
+    println("  saved → ", plotsdir("cnot3", "$(basename).{png,svg,pdf}"))
+    return fig
+end
+
+"""
+Mean GMRES iterations per step vs nsteps (log-log), for the iterative methods
+(QGD Hermite has no linear solve and is skipped).  Shows how hard the linear
+solve works: flat and small in the rotating frames, but pinned at the iteration
+cap in the lab-frame coarse-step blowup region and only dropping to a few once
+Δt is fine enough to make each step's system well-conditioned.
+"""
+function make_gmres_figure(df, methods; basename = "cnot3_gmres_$(frame)")
+    iter_methods = [m for m in methods if m != :hermite]
+    "avg_gmres" in names(df) || (println("  (no avg_gmres column; skipping GMRES figure)"); return nothing)
+    fig = Figure(size = (7.5inch, 4.6inch), fontsize = 11)
+    Label(fig[0, 1:2], L"\textrm{CNOT3\;GMRES\;iterations\;per\;step}\;\;(\textrm{%$(frame)\;frame})";
+          fontsize = 13, padding = (0, 0, 6, 0))
+    ax = Axis(fig[1, 1]; xlabel = "Number of timesteps",
+              ylabel = "Mean GMRES iterations / step", xscale = log10, yscale = log10)
+    for m in iter_methods, (si, s) in enumerate(SVALS)
+        sub = df[(df.method .== m) .& (df.s .== s), :]
+        sub = sub[.!ismissing.(sub.avg_gmres), :]
+        isempty(sub) && continue
+        sort!(sub, :nsteps)
+        scatterlines!(ax, Vector{Float64}(sub.nsteps), Vector{Float64}(sub.avg_gmres);
+                      color = METHOD_COLORS[m], marker = ORDER_MARKERS[si],
+                      markersize = 9, linewidth = 1.5)
+    end
+    method_entries = [LineElement(color = METHOD_COLORS[m], linewidth = 2) for m in iter_methods]
+    order_entries  = [MarkerElement(marker = ORDER_MARKERS[j], color = :black, markersize = 9)
+                      for j in 1:length(SVALS)]
+    Legend(fig[1, 2], [method_entries, order_entries],
+           [[METHOD_LABELS[m] for m in iter_methods], ["s=0", "s=1", "s=2"]],
+           ["Method", "Order"]; orientation = :vertical, tellheight = false, tellwidth = true)
+    colsize!(fig.layout, 1, Relative(0.72))
+    mkpath(plotsdir("cnot3"))
+    for ext in ("png", "svg", "pdf")
+        save(plotsdir("cnot3", "$(basename).$(ext)"), fig)
+    end
+    println("  saved → ", plotsdir("cnot3", "$(basename).{png,svg,pdf}"))
+    return fig
+end
+
 methods_present = [m for m in METHOD_ORDER if m in df.method]
-fig_conv = make_convergence_figure(df, methods_present)
+# The convergence panel shows only the three primary competitors; the other
+# figures keep the full method set.
+conv_methods = [m for m in methods_present if m != :controlled_hermite]
+fig_conv = make_convergence_figure(df, conv_methods)
 fig_time = make_timing_figure(df, methods_present)
+fig_dt   = make_stepsize_figure(df, methods_present)
+fig_wp   = make_workprecision_figure(df, methods_present)
+fig_gm   = make_gmres_figure(df, methods_present)
 println("Done.")
 fig_conv

@@ -34,10 +34,31 @@ function make_initial_condition(spec, qgd_prob)
     throw(ArgumentError("unknown initial condition spec: $spec"))
 end
 
+# Solve every column with `solve!(c, stats)` (which records per-step GMRES
+# iteration counts into `stats`), returning the stacked history, the wall-clock
+# solve time, and the mean / max GMRES iteration count pooled over all steps of
+# all columns.  Used by the iterative (Filon-family) methods to expose how hard
+# the linear solves work; the explicit QGD Hermite method has no GMRES and skips
+# this (its avg/max are `missing`).
+function solve_columns_with_stats(solve!, cols, stack_histories)
+    stats = FilonSolveStats()
+    niters = Int[]
+    solve_one = function (c)
+        h = solve!(c, stats)          # solvers empty! `stats` at entry
+        append!(niters, stats.gmres_niters)
+        return h
+    end
+    t_elapsed = @elapsed history = stack_histories(map(solve_one, cols))
+    avg_gmres = isempty(niters) ? missing : sum(niters) / length(niters)
+    max_gmres = isempty(niters) ? missing : maximum(niters)
+    return history, t_elapsed, avg_gmres, max_gmres
+end
+
 # Solve the ODE for one config, returning the saved history (complex,
 # N × (nsaves+1), on the shared `range(0, Tmax, nsaves+1)` grid), the wall-clock
-# time of the (post-compilation) solve, the saved times, and the config fields
-# (so `collect_results` exposes the parameter columns directly).
+# time of the (post-compilation) solve, the saved times, the mean / max GMRES
+# iteration count (for the iterative methods; `missing` for QGD Hermite), and the
+# config fields (so `collect_results` exposes the parameter columns directly).
 function run_simulation(config)
     frame = Symbol(config.frame)
     qgd_prob = cnot3_hoho_qgd_prob(;
@@ -64,6 +85,7 @@ function run_simulation(config)
         collect(eachcol(initial_condition))
     stack_histories(hs) = length(hs) == 1 ? hs[1] : reduce(vcat, hs)
 
+    avg_gmres = max_gmres = missing       # iterative methods overwrite these
     if config.method == :hermite
         solve_one = c -> eval_forward_complex_history(
             qgd_prob, controls, pcof, c; order, nsteps, saveEveryNsteps = save_every)
@@ -74,25 +96,38 @@ function run_simulation(config)
     elseif config.method == :filon
         co = qgd_to_controlled_operator(qgd_prob, controls, pcof)
         freqs = qgd_ansatz_frequencies(qgd_prob)
-        solve_one = c -> filon_solve_hardcoded(
-            co, c, freqs, config.Tmax / nsteps, nsteps, config.s; save_every)
         filon_solve_hardcoded(co, cols[1], freqs, config.Tmax / 2, 2,
                               config.s; save_final_only = true)            # warm-up
-        t_elapsed = @elapsed history = stack_histories(map(solve_one, cols))
+        history, t_elapsed, avg_gmres, max_gmres = solve_columns_with_stats(
+            (c, stats) -> filon_solve_hardcoded(
+                co, c, freqs, config.Tmax / nsteps, nsteps, config.s; save_every, stats),
+            cols, stack_histories)
     elseif config.method == :controlled_filon
         co = qgd_to_controlled_filon_operator(qgd_prob, controls, pcof)
         freqs = qgd_ansatz_frequencies(qgd_prob)
-        solve_one = c -> controlled_filon_solve(
-            co, c, freqs, config.Tmax / nsteps, nsteps, config.s; save_every)
         controlled_filon_solve(co, cols[1], freqs, config.Tmax / 2, 2,
                                config.s; save_final_only = true)           # warm-up
-        t_elapsed = @elapsed history = stack_histories(map(solve_one, cols))
+        history, t_elapsed, avg_gmres, max_gmres = solve_columns_with_stats(
+            (c, stats) -> controlled_filon_solve(
+                co, c, freqs, config.Tmax / nsteps, nsteps, config.s; save_every, stats),
+            cols, stack_histories)
+    elseif config.method == :controlled_hermite
+        # The ω = 0 (Hermite) counterpart of the efficient controlled Filon
+        # method: same full A(t) operator as :filon (carriers folded into the
+        # controls), but each control matrix is applied only s+1 times per step.
+        co = qgd_to_controlled_operator(qgd_prob, controls, pcof)
+        efficient_controlled_hermite_solve(co, cols[1], config.Tmax / 2, 2,
+                                           config.s; save_final_only = true) # warm-up
+        history, t_elapsed, avg_gmres, max_gmres = solve_columns_with_stats(
+            (c, stats) -> efficient_controlled_hermite_solve(
+                co, c, config.Tmax / nsteps, nsteps, config.s; save_every, stats),
+            cols, stack_histories)
     else
-        throw(ArgumentError("Invalid method '$(config.method)'. " *
-            "Must be :hermite, :filon, or :controlled_filon."))
+        throw(ArgumentError("Invalid method '$(config.method)'. Must be " *
+            ":hermite, :filon, :controlled_filon, or :controlled_hermite."))
     end
 
-    output = @strdict history t_elapsed t_saves
+    output = @strdict history t_elapsed t_saves avg_gmres max_gmres
     for (k, v) in pairs(config)
         output[string(k)] = v
     end

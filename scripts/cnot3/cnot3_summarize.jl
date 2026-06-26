@@ -26,10 +26,16 @@ isempty(df) && error("no result files found in $outdir")
 
 # Everything except nsteps and the saved outputs identifies a refinement family;
 # pair each run with its nsteps/refinementFactor neighbour for the Richardson
-# estimate (mirrors process_convergence_config).
-family(r) = (r.method, r.s, r.initialCondition, r.Tmax, r.nOscLevels,
+# estimate (mirrors process_convergence_config).  `frame` is part of the family:
+# the three frames pose different dynamics, so a run is only comparable to its
+# same-frame neighbour.
+family(r) = (r.method, r.frame, r.s, r.initialCondition, r.Tmax, r.nOscLevels,
              r.nGuardLevels, r.nsaves, r.refinementFactor)
 history_of = Dict((family(r)..., r.nsteps) => r.history for r in eachrow(df))
+
+# Older data dirs predate the GMRES iteration tracking; tolerate its absence.
+has_gmres = ("avg_gmres" in names(df)) && ("max_gmres" in names(df))
+gmres(r, col) = has_gmres ? r[col] : missing
 
 rows = NamedTuple[]
 for r in eachrow(df)
@@ -44,12 +50,13 @@ for r in eachrow(df)
         l2_err = richardson_l2_integral_error(
             r.history, prev, r.nsteps, coarse_nsteps, r.Tmax, order)
     end
-    push!(rows, (; initialCondition = r.initialCondition, method = r.method,
-                 s = r.s, order, nsteps = r.nsteps,
-                 final_err, l2_err, t_elapsed = r.t_elapsed))
+    push!(rows, (; initialCondition = r.initialCondition, frame = r.frame,
+                 method = r.method, s = r.s, order, nsteps = r.nsteps,
+                 final_err, l2_err, t_elapsed = r.t_elapsed,
+                 avg_gmres = gmres(r, :avg_gmres), max_gmres = gmres(r, :max_gmres)))
 end
 
-summary = sort!(DataFrame(rows), [:initialCondition, :method, :s, :nsteps])
+summary = sort!(DataFrame(rows), [:initialCondition, :frame, :method, :s, :nsteps])
 
 # Minimal CSV writer (avoids adding a CSV.jl dependency).
 csvcell(::Missing) = ""
