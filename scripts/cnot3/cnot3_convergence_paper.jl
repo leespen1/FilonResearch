@@ -174,7 +174,9 @@ function make_combined_figure(; basename = "cnot3_convergence_labrwa")
     rwa_error  = norm(uref_rwa .- uref_norwa)
     println("RWA modeling error (Vern9 RWA vs no-RWA at T): ", round(rwa_error; sigdigits = 4))
 
-    df_all = collect_results(datapath)
+    # Exclude norwa: the figure shows only lab + RWA, and skipping norwa avoids
+    # mmap-ing any norwa result file that a concurrent collection job is mid-write.
+    df_all = collect_results(datapath; rexclude = [r"frame=norwa"])
     df_all.method = Symbol.(df_all.method)
     df_lab, T_lab = frame_errors(df_all, "lab", uref_lab)
     df_rwa, T_rwa = frame_errors(df_all, "rwa", uref_rwa)
