@@ -89,14 +89,15 @@ const NOSC   = first(df).nOscLevels
 const NGUARD = first(df).nGuardLevels
 Tmax         = first(df).Tmax
 const NSAVES = first(df).nsaves
-ref  = vern9_reference(; frame, initialCondition = init,
-                       Nosc = NOSC, Nguard = NGUARD, Tmax, nsaves = NSAVES)
-uref = ref["uref"]
-href = ref["href"]
+ref = vern9_reference(; frame, initialCondition = init,
+                      Nosc = NOSC, Nguard = NGUARD, Tmax, nsaves = NSAVES)
 println("Reference: Vern9 (abstol=reltol=1e-15), frame=$frame, init=$init")
 
-df.final_error = [norm(h[:, end] .- uref) for h in df.history]
-df.l2_error    = [l2_integral_error_subsample(h, href, Tmax) for h in df.history]
+# l2_error is `missing` for final-only runs (single-column history); the plotted
+# metric is final_error, so that is fine.
+errs = [reference_errors(h, ref, Tmax) for h in df.history]
+df.final_error = [e.final_error for e in errs]
+df.l2_error    = [e.l2_error for e in errs]
 
 # Which error column to plot.
 const ERROR_COL = :final_error

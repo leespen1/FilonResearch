@@ -82,10 +82,14 @@ end
 
 Final-time 2-norm error and discrete l2-integral error of a run `history`
 measured against the cached Vern9 reference `ref` (the dict returned by
-[`vern9_reference`](@ref)).  Both share the `nsaves`-point save grid.
+[`vern9_reference`](@ref)).  The l2 error needs the full save grid, so it is
+`missing` for final-only runs (whose `history` has a single column); the
+final-time error is always available.
 """
 function reference_errors(history, ref, Tmax)
     final_error = norm(history[:, end] .- ref["uref"])
-    l2_error = l2_integral_error_subsample(history, ref["href"], Tmax)
+    href = ref["href"]
+    l2_error = size(history, 2) == size(href, 2) ?
+        l2_integral_error_subsample(history, href, Tmax) : missing
     return (; final_error, l2_error)
 end

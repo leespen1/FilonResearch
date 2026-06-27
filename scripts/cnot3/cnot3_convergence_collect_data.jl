@@ -50,6 +50,9 @@ sweep so a single job — local or on SLURM — can target a batch:
   * `--nruns 5`                repeat each solve this many times and average the
                                timing (default 1); the result history is
                                unchanged, only the recorded t_elapsed is averaged
+  * `--save-final-only false`  save only the final state (default true) or the
+                               full N × (nsaves+1) history (false, needed to
+                               compute the l2-integral error)
 
     julia --project cnot3_convergence_collect_data.jl --method hermite --nsteps 128,256,512
     sbatch cnot3_convergence_collect_data.sb --method filon --gmres-rtol 1e-13,1e-8
@@ -94,13 +97,18 @@ gmres_rtols = (1e-13,)
 # result history is identical across repetitions, so this only sharpens timing.
 nRuns = 1
 
+# Save only the final state by default (the convergence study measures final-time
+# error against the reference).  Set false to keep the full save grid for the
+# l2-integral error.
+saveFinalOnly = true
+
 # ------------------------------------------------------------
 # Command-line selection (subset of the sweep above; see the docstring)
 # ------------------------------------------------------------
 # Parse `--flag value` pairs into overrides; each field is `nothing` when the
 # corresponding flag is absent, in which case the default above is used.
 function parse_selection(args)
-    methods = s_sel = nsteps = inits = frames = atols = rtols = nruns = nothing
+    methods = s_sel = nsteps = inits = frames = atols = rtols = nruns = sfo = nothing
     i = firstindex(args)
     while i <= lastindex(args)
         flag = args[i]
@@ -122,13 +130,16 @@ function parse_selection(args)
             rtols = parse.(Float64, split(value, ','))
         elseif flag == "--nruns"
             nruns = parse(Int, value)
+        elseif flag == "--save-final-only"
+            sfo = parse(Bool, value)
         else
             throw(ArgumentError("unknown flag '$flag' (expected --method, --s, " *
-                "--nsteps, --init, --frame, --gmres-atol, --gmres-rtol, or --nruns)"))
+                "--nsteps, --init, --frame, --gmres-atol, --gmres-rtol, --nruns, " *
+                "or --save-final-only)"))
         end
         i += 2
     end
-    return (; methods, s_sel, nsteps, inits, frames, atols, rtols, nruns)
+    return (; methods, s_sel, nsteps, inits, frames, atols, rtols, nruns, sfo)
 end
 
 selection = parse_selection(ARGS)
@@ -140,6 +151,7 @@ selected_frames   = something(selection.frames, collect(all_frames))
 selected_atols    = something(selection.atols, collect(gmres_atols))
 selected_rtols    = something(selection.rtols, collect(gmres_rtols))
 selected_nRuns    = something(selection.nruns, nRuns)
+selected_sfo      = something(selection.sfo, saveFinalOnly)
 
 selected_nRuns >= 1 || throw(ArgumentError("nRuns must be ≥ 1; got $selected_nRuns"))
 for m in selected_methods
@@ -198,7 +210,8 @@ for initialCondition in selected_inits, frame in selected_frames, method in sele
             throw(ArgumentError("nsteps=$nsteps must be divisible by nsaves=$nsaves"))
         push!(configs, (;
             method, frame, s, Tmax, initialCondition, nOscLevels, nGuardLevels,
-            nsaves, nRuns = selected_nRuns, gmresAtol, gmresRtol, nsteps,
+            nsaves, saveFinalOnly = selected_sfo, nRuns = selected_nRuns,
+            gmresAtol, gmresRtol, nsteps,
         ))
     end
 end

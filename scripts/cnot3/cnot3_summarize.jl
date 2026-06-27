@@ -45,7 +45,7 @@ for r in eachrow(df)
         initialCondition = r.initialCondition, frame = r.frame, method = r.method,
         s = r.s, order = 2 * (r.s + 1), nsteps = r.nsteps,
         final_err = errs.final_error, l2_err = errs.l2_error,
-        t_elapsed = r.t_elapsed, nRuns = r.nRuns,
+        t_elapsed = r.t_elapsed, nRuns = r.nRuns, saveFinalOnly = r.saveFinalOnly,
         gmres_mean = r.gmres_mean, gmres_median = r.gmres_median,
         gmres_max = r.gmres_max, gmres_std = r.gmres_std,
         gmresAtol = r.gmresAtol, gmresRtol = r.gmresRtol,

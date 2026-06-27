@@ -58,7 +58,8 @@ function gmres_summary(niters)
 end
 
 # Solve the ODE for one config and return a dictionary holding the saved history
-# (complex, N × (nsaves+1), on the shared `range(0, Tmax, nsaves+1)` grid), the
+# (complex; by default just the N × 1 final state — see `saveFinalOnly` — or the
+# full N × (nsaves+1) grid when `saveFinalOnly = false`), the
 # wall-clock solve time averaged over `config.nRuns` repetitions (compilation
 # excluded — see below), the saved times, summary statistics of the per-step
 # GMRES iteration counts (for the iterative methods; `missing` for QGD Hermite,
@@ -87,17 +88,24 @@ function run_simulation(config)
 
     order = 2 * (config.s + 1)
     nsteps = config.nsteps
-    t_saves = collect(range(0, config.Tmax, length = 1 + config.nsaves))
+    # By default only the final state is saved: the convergence study measures
+    # final-time error against the reference, so the intermediate history is
+    # unnecessary, and skipping it makes the solve cheaper and the timing reflect
+    # the production "just give me the gate" use.  Set saveFinalOnly = false to
+    # keep the full N × (nsaves+1) save grid (needed for the l2-integral error).
+    sfo = config.saveFinalOnly
+    t_saves = sfo ? [config.Tmax] : collect(range(0, config.Tmax, length = 1 + config.nsaves))
 
-    # A single state vector solves to one N × (nsaves+1) history; the "basis"
-    # matrix solves each column with the same single-state solver and stacks the
-    # histories vertically into one (N·ncols) × (nsaves+1) array.  The final-time
-    # 2-norm of a stacked column is then the Frobenius (gate-level) error, and
-    # the downstream error analysis (which treats columns as state vectors and
-    # time as the second axis) needs no changes.
+    # A single state vector solves to one history; the "basis" matrix solves each
+    # column with the same single-state solver and stacks the per-column
+    # histories vertically (the final-time 2-norm of the stacked column is then
+    # the Frobenius / gate-level error).  Per-column results are coerced to
+    # matrices first, so the final-only case (a vector per column) stacks into an
+    # (N·ncols) × 1 matrix, uniform with the full-history (N·ncols) × (nsaves+1).
     cols = initial_condition isa AbstractVector ? (initial_condition,) :
         collect(eachcol(initial_condition))
-    stack_histories(hs) = length(hs) == 1 ? hs[1] : reduce(vcat, hs)
+    to_mat(h) = h isa AbstractVector ? reshape(h, :, 1) : h
+    stack_histories(hs) = length(hs) == 1 ? to_mat(hs[1]) : reduce(vcat, map(to_mat, hs))
 
     atol = config.gmresAtol
     rtol = config.gmresRtol
@@ -109,9 +117,13 @@ function run_simulation(config)
     # solve then uses, so compilation never lands inside the timed region.
     if config.method == :hermite
         do_solve = function (n)
-            hist = stack_histories(map(
-                c -> eval_forward_complex_history(qgd_prob, controls, pcof, c;
-                    order, nsteps = n, saveEveryNsteps = div(n, config.nsaves)), cols))
+            # saveEveryNsteps = n saves only the endpoints; keep the final column.
+            se = sfo ? n : div(n, config.nsaves)
+            hist = stack_histories(map(cols) do c
+                h = eval_forward_complex_history(qgd_prob, controls, pcof, c;
+                        order, nsteps = n, saveEveryNsteps = se)
+                sfo ? h[:, end] : h
+            end)
             return hist, Int[]                  # QGD Hermite has no GMRES
         end
     elseif config.method == :filon
@@ -119,7 +131,7 @@ function run_simulation(config)
         freqs = qgd_ansatz_frequencies(qgd_prob)
         do_solve = (n) -> solve_columns(
             (c, stats) -> filon_solve_hardcoded(
-                co, c, freqs, config.Tmax / n, n, config.s;
+                co, c, freqs, config.Tmax / n, n, config.s; save_final_only = sfo,
                 save_every = div(n, config.nsaves), stats, gmres_atol = atol, gmres_rtol = rtol),
             cols, stack_histories)
     elseif config.method == :controlled_filon
@@ -127,7 +139,7 @@ function run_simulation(config)
         freqs = qgd_ansatz_frequencies(qgd_prob)
         do_solve = (n) -> solve_columns(
             (c, stats) -> controlled_filon_solve(
-                co, c, freqs, config.Tmax / n, n, config.s;
+                co, c, freqs, config.Tmax / n, n, config.s; save_final_only = sfo,
                 save_every = div(n, config.nsaves), stats, gmres_atol = atol, gmres_rtol = rtol),
             cols, stack_histories)
     elseif config.method == :controlled_hermite
@@ -137,7 +149,7 @@ function run_simulation(config)
         co = qgd_to_controlled_operator(qgd_prob, controls, pcof)
         do_solve = (n) -> solve_columns(
             (c, stats) -> efficient_controlled_hermite_solve(
-                co, c, config.Tmax / n, n, config.s;
+                co, c, config.Tmax / n, n, config.s; save_final_only = sfo,
                 save_every = div(n, config.nsaves), stats, gmres_atol = atol, gmres_rtol = rtol),
             cols, stack_histories)
     else
