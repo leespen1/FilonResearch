@@ -7,39 +7,34 @@ Assumes `FilonResearch`, `QuantumGateDesign`, and `LinearAlgebra.norm` are in
 scope in the including module.
 """
 
+using Statistics: mean, median, std
+
 include(srcdir("cnot3_hoho_helpers.jl"))
 include(srcdir("QuantumGateDesign_interface.jl"))
 
-# Construct the initial condition from its spec and the QGD problem.  Returns a
-# single state vector for "uniform"/"eN", or — for "basis" — the N_tot × N_ess
-# matrix of essential computational basis states that QuantumGateDesign
-# propagates to evaluate a gate (its `u0`/`v0` fields).
+# Construct the initial condition from its spec and the QGD problem:
+#   * "uniform" — the equal-weight superposition over all levels (one state
+#     vector);
+#   * "basis"   — the full essential computational basis (the N_tot × N_ess
+#     matrix of gate states QuantumGateDesign propagates to evaluate a gate, its
+#     `u0`/`v0` fields).
 function make_initial_condition(spec, qgd_prob)
     n = qgd_prob.N_tot_levels
-    if spec == "uniform" # Uniform superposition
+    if spec == "uniform"
         u0 = ones(ComplexF64, n)
         return u0 ./ norm(u0)
-    elseif spec == "basis" # Full essential computational basis (the gate states)
+    elseif spec == "basis"
         return complex.(qgd_prob.u0, qgd_prob.v0)
-    elseif spec isa AbstractString # Basis vector "eN"
-        m = match(r"^e(\d+)$", spec)
-        if m !== nothing
-            k = parse(Int, m.captures[1])
-            1 <= k <= n || throw(ArgumentError("basis index must be between 1 and $n"))
-            u0 = zeros(ComplexF64, n)
-            u0[k] = 1.0
-            return u0
-        end
     end
-    throw(ArgumentError("unknown initial condition spec: $spec"))
+    throw(ArgumentError("unknown initial condition '$spec'; choose \"basis\" or \"uniform\""))
 end
 
 # Solve every column with `solve!(c, stats)` (which records per-step GMRES
 # iteration counts into `stats`), returning the stacked history, the wall-clock
-# solve time, and the mean / max GMRES iteration count pooled over all steps of
+# solve time, and the per-step GMRES iteration counts pooled over all steps of
 # all columns.  Used by the iterative (Filon-family) methods to expose how hard
-# the linear solves work; the explicit QGD Hermite method has no GMRES and skips
-# this (its avg/max are `missing`).
+# the linear solves work; the explicit QGD Hermite method has no GMRES and so
+# returns an empty count vector.
 function solve_columns_with_stats(solve!, cols, stack_histories)
     stats = FilonSolveStats()
     niters = Int[]
@@ -49,16 +44,30 @@ function solve_columns_with_stats(solve!, cols, stack_histories)
         return h
     end
     t_elapsed = @elapsed history = stack_histories(map(solve_one, cols))
-    avg_gmres = isempty(niters) ? missing : sum(niters) / length(niters)
-    max_gmres = isempty(niters) ? missing : maximum(niters)
-    return history, t_elapsed, avg_gmres, max_gmres
+    return history, t_elapsed, niters
 end
 
-# Solve the ODE for one config, returning the saved history (complex,
-# N × (nsaves+1), on the shared `range(0, Tmax, nsaves+1)` grid), the wall-clock
-# time of the (post-compilation) solve, the saved times, the mean / max GMRES
-# iteration count (for the iterative methods; `missing` for QGD Hermite), and the
-# config fields (so `collect_results` exposes the parameter columns directly).
+# Summarize the pooled per-step GMRES iteration counts.  Returns `missing` for
+# every statistic when no GMRES was used (the explicit QGD Hermite method), so
+# the result columns line up across all methods.
+function gmres_summary(niters)
+    isempty(niters) && return (; mean = missing, median = missing,
+                               max = missing, std = missing)
+    return (; mean = mean(niters), median = median(niters),
+            max = maximum(niters), std = std(niters))
+end
+
+# Solve the ODE for one config and return a dictionary holding the saved history
+# (complex, N × (nsaves+1), on the shared `range(0, Tmax, nsaves+1)` grid), the
+# wall-clock time of the (post-compilation) solve, the saved times, summary
+# statistics of the per-step GMRES iteration counts (for the iterative methods;
+# `missing` for QGD Hermite, which has no linear solve), the git commit the run
+# was produced on (and whether the working tree was dirty), and the config fields
+# (so `collect_results` exposes the parameter columns directly).
+#
+# Errors are deliberately *not* recorded here: they are computed downstream
+# against the Vern9 reference solution (see `cnot3_reference.jl`), so a run's
+# accuracy never depends on which other runs happen to share its data directory.
 function run_simulation(config)
     frame = Symbol(config.frame)
     qgd_prob = cnot3_hoho_qgd_prob(;
@@ -85,7 +94,10 @@ function run_simulation(config)
         collect(eachcol(initial_condition))
     stack_histories(hs) = length(hs) == 1 ? hs[1] : reduce(vcat, hs)
 
-    avg_gmres = max_gmres = missing       # iterative methods overwrite these
+    atol = config.gmresAtol
+    rtol = config.gmresRtol
+
+    niters = Int[]        # per-step GMRES counts; stays empty for QGD Hermite
     if config.method == :hermite
         solve_one = c -> eval_forward_complex_history(
             qgd_prob, controls, pcof, c; order, nsteps, saveEveryNsteps = save_every)
@@ -98,18 +110,20 @@ function run_simulation(config)
         freqs = qgd_ansatz_frequencies(qgd_prob)
         filon_solve_hardcoded(co, cols[1], freqs, config.Tmax / 2, 2,
                               config.s; save_final_only = true)            # warm-up
-        history, t_elapsed, avg_gmres, max_gmres = solve_columns_with_stats(
+        history, t_elapsed, niters = solve_columns_with_stats(
             (c, stats) -> filon_solve_hardcoded(
-                co, c, freqs, config.Tmax / nsteps, nsteps, config.s; save_every, stats),
+                co, c, freqs, config.Tmax / nsteps, nsteps, config.s;
+                save_every, stats, gmres_atol = atol, gmres_rtol = rtol),
             cols, stack_histories)
     elseif config.method == :controlled_filon
         co = qgd_to_controlled_filon_operator(qgd_prob, controls, pcof)
         freqs = qgd_ansatz_frequencies(qgd_prob)
         controlled_filon_solve(co, cols[1], freqs, config.Tmax / 2, 2,
                                config.s; save_final_only = true)           # warm-up
-        history, t_elapsed, avg_gmres, max_gmres = solve_columns_with_stats(
+        history, t_elapsed, niters = solve_columns_with_stats(
             (c, stats) -> controlled_filon_solve(
-                co, c, freqs, config.Tmax / nsteps, nsteps, config.s; save_every, stats),
+                co, c, freqs, config.Tmax / nsteps, nsteps, config.s;
+                save_every, stats, gmres_atol = atol, gmres_rtol = rtol),
             cols, stack_histories)
     elseif config.method == :controlled_hermite
         # The ω = 0 (Hermite) counterpart of the efficient controlled Filon
@@ -118,16 +132,36 @@ function run_simulation(config)
         co = qgd_to_controlled_operator(qgd_prob, controls, pcof)
         efficient_controlled_hermite_solve(co, cols[1], config.Tmax / 2, 2,
                                            config.s; save_final_only = true) # warm-up
-        history, t_elapsed, avg_gmres, max_gmres = solve_columns_with_stats(
+        history, t_elapsed, niters = solve_columns_with_stats(
             (c, stats) -> efficient_controlled_hermite_solve(
-                co, c, config.Tmax / nsteps, nsteps, config.s; save_every, stats),
+                co, c, config.Tmax / nsteps, nsteps, config.s;
+                save_every, stats, gmres_atol = atol, gmres_rtol = rtol),
             cols, stack_histories)
     else
         throw(ArgumentError("Invalid method '$(config.method)'. Must be " *
             ":hermite, :filon, :controlled_filon, or :controlled_hermite."))
     end
 
-    output = @strdict history t_elapsed t_saves avg_gmres max_gmres
+    g = gmres_summary(niters)
+
+    # Provenance: the commit this run was produced on, and whether the working
+    # tree had uncommitted changes (gitdescribe appends a "-dirty" suffix).  The
+    # dirty state is recorded, not warned about — a dirty tree is fine here.
+    gitdesc = gitdescribe(projectdir(); warn = false)
+    gitdirty = endswith(gitdesc, "-dirty")
+    gitcommit = gitdirty ? chop(gitdesc; tail = length("-dirty")) : gitdesc
+
+    output = Dict{String,Any}(
+        "history"      => history,
+        "t_elapsed"    => t_elapsed,
+        "t_saves"      => t_saves,
+        "gmres_mean"   => g.mean,
+        "gmres_median" => g.median,
+        "gmres_max"    => g.max,
+        "gmres_std"    => g.std,
+        "gitcommit"    => gitcommit,
+        "gitdirty"     => gitdirty,
+    )
     for (k, v) in pairs(config)
         output[string(k)] = v
     end
