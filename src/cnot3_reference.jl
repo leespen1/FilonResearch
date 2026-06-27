@@ -41,8 +41,16 @@ function compute_vern9_reference(; frame, initialCondition, Nosc, Nguard, Tmax,
 
     histories = map(cols) do c
         u0 = ComplexF64.(Vector(c))
+        # The lab frame's carriers force the adaptive solver to take many steps to
+        # reach 1e-15, far past the default cap; raise maxiters and fail loudly if
+        # the integration still stops short of Tmax rather than returning a
+        # silently truncated (wrong-final-time) reference.
         sol = solve(ODEProblem(rhs!, u0, (0.0, Tmax)), Vern9();
-                    abstol = abstol, reltol = reltol, saveat = t_saves)
+                    abstol = abstol, reltol = reltol, saveat = t_saves,
+                    maxiters = 20_000_000)
+        length(sol.t) == length(t_saves) && isapprox(sol.t[end], Tmax; atol = 1e-9) ||
+            error("Vern9 reference (frame=$frame, init=$initialCondition) stopped early at " *
+                  "t=$(sol.t[end]) of $Tmax (hit the step cap); raise maxiters")
         reduce(hcat, (Vector{ComplexF64}(u) for u in sol.u))
     end
     return length(histories) == 1 ? histories[1] : reduce(vcat, histories)
