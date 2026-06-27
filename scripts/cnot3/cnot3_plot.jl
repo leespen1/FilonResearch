@@ -4,8 +4,9 @@
 #
 # Reads the per-run result files written by `cnot3_convergence_collect_data.jl`,
 # gathers them into a DataFrame with `collect_results`, computes each run's error
-# against the *finest run* (treated as the reference / ground truth), then plots
-# a rabi-style log-log convergence figure (and a wall-clock-time figure).
+# against the Vern9 reference solution (an independent, high-accuracy integration
+# of the same dynamics; see `cnot3_reference.jl`), then plots a rabi-style log-log
+# convergence figure (and a wall-clock-time figure).
 #
 # Data collection and plotting are deliberately separate: everything below works
 # off the DataFrame, so filtering ("ignore errors above X", "only these nsteps
@@ -22,19 +23,20 @@ using DataFrames
 using LinearAlgebra
 using Printf
 using CairoMakie
+using FilonResearch
+using QuantumGateDesign
 
 include(srcdir("error_analysis.jl"))   # l2_integral_error_subsample
+include(srcdir("cnot3_run.jl"))        # problem builders, make_initial_condition
+include(srcdir("cnot3_reference.jl"))  # vern9_reference
 
 CairoMakie.set_theme!(CairoMakie.theme_latexfonts())
 const inch = 96
 
 const prefix = get(ENV, "CNOT3_PREFIX", "cnot3Convergence")
-# Plot the current commit's data by default; override with CNOT3_COMMIT to plot
-# a specific past collection (the subdirectory name under datadir(prefix)).
-const commit = get(ENV, "CNOT3_COMMIT", gitdescribe(projectdir()))
-const datapath = datadir(prefix, commit)
-# Each initial condition has its own row count and its own finest-run reference,
-# so we plot one at a time.  Override with CNOT3_INIT (e.g. "uniform").
+const datapath = datadir(prefix)
+# Each initial condition has its own Vern9 reference and row count, so we plot one
+# at a time.  Override with CNOT3_INIT ("basis" or "uniform").
 const init = get(ENV, "CNOT3_INIT", "basis")
 # Solutions differ across frames, so each frame likewise gets its own reference
 # and its own figure.  Override with CNOT3_FRAME ("rwa", "norwa", or "lab").
@@ -79,17 +81,19 @@ println("initialCondition = $(init), frame = $(frame)")
 println("Loaded $(nrow(df)) runs: ",
         join(["$(METHOD_LABELS[m])×$(count(==(m), df.method))" for m in unique(df.method)], ", "))
 
-# Finest-run reference: the deepest run of the *highest order* present (order
-# first, then nsteps).  Ranking by nsteps alone can select a low-order run —
-# e.g. an order-2 series pushed to 2^24 — whose own error is many digits above
-# the high-order floors it would be measuring.
-sort!(df, [:s, :nsteps], rev = true)
-ref = first(df)
-Tmax = ref.Tmax
-uref = ref.history[:, end]
-href = ref.history
-@printf("Reference (finest run): method=%s  s=%d  nsteps=%d\n",
-        METHOD_LABELS[ref.method], ref.s, ref.nsteps)
+# Vern9 reference: an independent, high-accuracy integration of this frame's own
+# dynamics (cached; see cnot3_reference.jl).  Every run's error is measured
+# against it, so the convergence floors reflect true accuracy rather than the
+# accuracy of whichever run happens to be finest.
+const NOSC   = first(df).nOscLevels
+const NGUARD = first(df).nGuardLevels
+Tmax         = first(df).Tmax
+const NSAVES = first(df).nsaves
+ref  = vern9_reference(; frame, initialCondition = init,
+                       Nosc = NOSC, Nguard = NGUARD, Tmax, nsaves = NSAVES)
+uref = ref["uref"]
+href = ref["href"]
+println("Reference: Vern9 (abstol=reltol=1e-13), frame=$frame, init=$init")
 
 df.final_error = [norm(h[:, end] .- uref) for h in df.history]
 df.l2_error    = [l2_integral_error_subsample(h, href, Tmax) for h in df.history]
@@ -129,7 +133,7 @@ order.  Saves png/svg/pdf to `plotsdir("cnot3")`.
 function make_convergence_figure(df, methods; basename = "cnot3_convergence_$(frame)")
     fig = Figure(size = (7.5inch, 4.6inch), fontsize = 11)
     Label(fig[0, 1:2],
-          L"\textrm{CNOT3\;gate\;convergence}\;\;(N_{\mathrm{osc}}=%$(ref.nOscLevels),\;T=%$(Tmax),\;\textrm{%$(frame)\;frame})";
+          L"\textrm{CNOT3\;gate\;convergence}\;\;(N_{\mathrm{osc}}=%$(NOSC),\;T=%$(Tmax),\;\textrm{%$(frame)\;frame})";
           fontsize = 13, padding = (0, 0, 6, 0))
     ax = Axis(fig[1, 1];
               xlabel = "Number of timesteps", ylabel = "Final-time 2-norm error",
@@ -231,7 +235,7 @@ error decreases as Δt → 0 (curves descend to the left), with O(Δtᵖ) guides
 function make_stepsize_figure(df, methods; basename = "cnot3_stepsize_$(frame)")
     fig = Figure(size = (7.5inch, 4.6inch), fontsize = 11)
     Label(fig[0, 1:2],
-          L"\textrm{CNOT3\;gate\;convergence}\;\;(N_{\mathrm{osc}}=%$(ref.nOscLevels),\;T=%$(Tmax),\;\textrm{%$(frame)\;frame})";
+          L"\textrm{CNOT3\;gate\;convergence}\;\;(N_{\mathrm{osc}}=%$(NOSC),\;T=%$(Tmax),\;\textrm{%$(frame)\;frame})";
           fontsize = 13, padding = (0, 0, 6, 0))
     ax = Axis(fig[1, 1];
               xlabel = L"Time step $\Delta t$", ylabel = "Final-time 2-norm error",
@@ -342,7 +346,7 @@ cap in the lab-frame coarse-step blowup region and only dropping to a few once
 """
 function make_gmres_figure(df, methods; basename = "cnot3_gmres_$(frame)")
     iter_methods = [m for m in methods if m != :hermite]
-    "avg_gmres" in names(df) || (println("  (no avg_gmres column; skipping GMRES figure)"); return nothing)
+    "gmres_mean" in names(df) || (println("  (no gmres_mean column; skipping GMRES figure)"); return nothing)
     fig = Figure(size = (7.5inch, 4.6inch), fontsize = 11)
     Label(fig[0, 1:2], L"\textrm{CNOT3\;GMRES\;iterations\;per\;step}\;\;(\textrm{%$(frame)\;frame})";
           fontsize = 13, padding = (0, 0, 6, 0))
@@ -350,10 +354,10 @@ function make_gmres_figure(df, methods; basename = "cnot3_gmres_$(frame)")
               ylabel = "Mean GMRES iterations / step", xscale = log10, yscale = log10)
     for m in iter_methods, (si, s) in enumerate(SVALS)
         sub = df[(df.method .== m) .& (df.s .== s), :]
-        sub = sub[.!ismissing.(sub.avg_gmres), :]
+        sub = sub[.!ismissing.(sub.gmres_mean), :]
         isempty(sub) && continue
         sort!(sub, :nsteps)
-        scatterlines!(ax, Vector{Float64}(sub.nsteps), Vector{Float64}(sub.avg_gmres);
+        scatterlines!(ax, Vector{Float64}(sub.nsteps), Vector{Float64}(sub.gmres_mean);
                       color = METHOD_COLORS[m], marker = ORDER_MARKERS[si],
                       markersize = 9, linewidth = 1.5)
     end

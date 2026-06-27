@@ -16,9 +16,8 @@
 # dropped counter-rotating terms, so their separation at T is the accuracy floor
 # no RWA-frame computation can beat.  The Vern9 references are cached.
 #
-# Run (data is commit-namespaced; point at the collection commit):
-#   CNOT3_COMMIT=46407571d844c93a725b139e763f21dfa1bc1fcc \
-#     julia --project=. scripts/cnot3/cnot3_convergence_paper.jl
+# Run:
+#   julia --project=. scripts/cnot3/cnot3_convergence_paper.jl
 # =============================================================================
 
 using DrWatson
@@ -33,18 +32,19 @@ using OrdinaryDiffEqVerner
 
 # Problem builders + make_initial_condition + qgd_to_controlled_operator.
 include(srcdir("cnot3_run.jl"))
+include(srcdir("cnot3_reference.jl"))   # vern9_reference
 
 CairoMakie.set_theme!(CairoMakie.theme_latexfonts())
 
 const prefix   = get(ENV, "CNOT3_PREFIX", "cnot3Convergence")
-const commit   = get(ENV, "CNOT3_COMMIT", gitdescribe(projectdir()))
-const datapath = datadir(prefix, commit)
+const datapath = datadir(prefix)
 const init     = get(ENV, "CNOT3_INIT", "basis")
 
 # Problem size (must match the collected sweep).
 const NOSC = 10
 const NGUARD = 2
 const TMAX = 550.0
+const NSAVES = 16
 
 # Method = colour + linestyle (so coincident curves stay distinct), order = marker.
 # "Hermite" here is the efficient controlled-Hermite method (the ω=0 Filon), which
@@ -68,45 +68,9 @@ const ERROR_WINDOW = (1e-13, 1e1)
 const PAPER_PT_PER_IN = 72
 const PAPER_WIDTH_IN  = 5.125
 
-# -----------------------------------------------------------------------------
-# Vern9 reference: solve dψ/dt = A(t)ψ on a frame's own ODE at 1e-13, one column
-# per essential gate state, returning the stacked final state (matches the
-# collected history[:, end] layout).  Cached per frame in the campaign data dir.
-# -----------------------------------------------------------------------------
-function compute_vern9_reference(frame; abstol = 1e-13, reltol = 1e-13)
-    fr = Symbol(frame)
-    qgd_prob = cnot3_hoho_qgd_prob(N_osc_levels = NOSC, N_guard_levels = NGUARD,
-                                   Tmax = TMAX, frame = fr)
-    controls, pcof = cnot3_hoho_controls_and_pcof(frame = fr)
-    co = qgd_to_controlled_operator(qgd_prob, controls, pcof)   # A(t) = Σ cₖ(t) Aₖ
-    ic = make_initial_condition("basis", qgd_prob)              # N_tot × N_ess
-    op = Operator(co, 0.0)                                      # reusable A(t) buffer
-    function rhs!(du, u, p, t)
-        evaluate!(op, co, t)                                   # refresh A(t) in place
-        mul!(du, op, u)
-        return nothing
-    end
-    finals = map(eachcol(ic)) do c
-        u0 = ComplexF64.(Vector(c))
-        sol = solve(ODEProblem(rhs!, u0, (0.0, TMAX)), Vern9();
-                    abstol = abstol, reltol = reltol, save_everystep = false)
-        Vector{ComplexF64}(sol.u[end])
-    end
-    return reduce(vcat, finals)
-end
-
-function vern9_reference(frame)
-    cfg = Dict("frame" => string(frame), "abstol" => 1e-13, "reltol" => 1e-13,
-               "Nosc" => NOSC, "Nguard" => NGUARD, "Tmax" => TMAX)
-    # Cache in a SEPARATE data dir (not under the run prefix) so collect_results
-    # over the run data never picks these reference files up.
-    data, _ = produce_or_load(cfg, datadir("cnot3_vern9ref", commit);
-                              prefix = "cnot3_vern9ref", tag = false) do _
-        println("  computing Vern9 reference for frame=", frame, " (this is the slow step)")
-        @strdict uref = compute_vern9_reference(frame)
-    end
-    return data["uref"]
-end
+# Final-time Vern9 reference state for one frame (cached; see cnot3_reference.jl).
+paper_uref(frame) = vern9_reference(; frame, initialCondition = init, Nosc = NOSC,
+                                    Nguard = NGUARD, Tmax = TMAX, nsaves = NSAVES)["uref"]
 
 # -----------------------------------------------------------------------------
 # Data: per-frame DataFrame with final-time error vs the frame's Vern9 reference.
@@ -151,9 +115,9 @@ end
 # -----------------------------------------------------------------------------
 function make_combined_figure(; basename = "cnot3_convergence_labrwa")
     # Independent Vern9 references (cached); RWA modeling error = RWA vs no-RWA.
-    uref_lab   = vern9_reference("lab")
-    uref_rwa   = vern9_reference("rwa")
-    uref_norwa = vern9_reference("norwa")
+    uref_lab   = paper_uref("lab")
+    uref_rwa   = paper_uref("rwa")
+    uref_norwa = paper_uref("norwa")
     rwa_error  = norm(uref_rwa .- uref_norwa)
     println("RWA modeling error (Vern9 RWA vs no-RWA at T): ", round(rwa_error; sigdigits = 4))
 
