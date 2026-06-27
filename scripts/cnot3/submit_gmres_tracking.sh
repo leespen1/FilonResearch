@@ -1,8 +1,6 @@
 #!/bin/bash
-# Re-collection of the CNOT3 sweep with GMRES iteration tracking (avg/max per
-# run), plus lab-frame depth extensions.  Run from a CLEAN checkout of the commit
-# that adds GMRES tracking; data is commit-namespaced, so this writes a fresh
-# data dir.
+# Re-collection of the CNOT3 sweep with GMRES iteration tracking (mean/median/
+# max/std per run), plus lab-frame depth extensions.
 #
 # Hermite (QGD) is the one method WITHOUT GMRES, and its output is byte-for-byte
 # unchanged by the tracking edit, so its files are copied from the previous data

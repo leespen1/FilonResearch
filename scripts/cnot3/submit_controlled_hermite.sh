@@ -2,10 +2,9 @@
 # Wave-1 SLURM submission for the CNOT3 convergence campaign with the new
 # controlled-Hermite method, across all three frames (rwa, norwa, lab).
 #
-# Data is namespaced by commit (commit_datadir), so this must run from a CLEAN
-# checkout of the commit that adds :controlled_hermite; every (method, frame, s,
-# nsteps) solve is cached individually by produce_or_load, so jobs compose and
-# TIMEOUTed configs simply stay uncached for a later resubmission.
+# Every (method, frame, s, nsteps) solve is cached individually by
+# produce_or_load (each result records the commit it was produced on), so jobs
+# compose and TIMEOUTed configs simply stay uncached for a later resubmission.
 #
 # All jobs go through the node-local-depot script (cnot3_convergence_localdepot.sb):
 # the dev node has already warmed ~/.julia, so the in-job precompile is mostly a

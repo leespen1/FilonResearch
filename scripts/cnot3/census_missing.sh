@@ -1,13 +1,12 @@
 #!/bin/bash
-# Report which (frame, method, s, nsteps) configs of the controlled-Hermite
-# CNOT3 sweep are NOT yet cached in the commit-namespaced data dir, so a cleanup
-# wave can target exactly the gaps (HDF5-race casualties, 4h timeouts, …).
+# Report which (frame, method, s, nsteps) configs of the CNOT3 sweep are NOT yet
+# cached in the data dir, so a cleanup wave can target exactly the gaps
+# (HDF5-race casualties, 4h timeouts, …).
 # Prints one "frame method s nsteps" line per missing config.
 set -euo pipefail
 cd "$(dirname "$0")"
 
-COMMIT=$(julia --project -e 'using DrWatson; print(gitdescribe(projectdir()))')
-DD="../../data/cnot3Convergence/$COMMIT"
+DD="../../data/cnot3Convergence"
 INIT=basis
 
 hermite_e=$(seq 4 22)
