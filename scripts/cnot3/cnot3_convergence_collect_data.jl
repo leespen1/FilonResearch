@@ -47,6 +47,9 @@ sweep so a single job — local or on SLURM — can target a batch:
   * `--gmres-atol 1e-13,1e-10` GMRES absolute tolerance(s) for the iterative
                                (Filon-family) solvers
   * `--gmres-rtol 1e-13,1e-10` GMRES relative tolerance(s)
+  * `--nruns 5`                repeat each solve this many times and average the
+                               timing (default 1); the result history is
+                               unchanged, only the recorded t_elapsed is averaged
 
     julia --project cnot3_convergence_collect_data.jl --method hermite --nsteps 128,256,512
     sbatch cnot3_convergence_collect_data.sb --method filon --gmres-rtol 1e-13,1e-8
@@ -87,13 +90,17 @@ hermite_step_exponents = 4:22              # Hermite is cheap per step, push it 
 gmres_atols = (1e-13,)
 gmres_rtols = (1e-13,)
 
+# Number of timed repetitions per solve; t_elapsed is averaged over them.  The
+# result history is identical across repetitions, so this only sharpens timing.
+nRuns = 1
+
 # ------------------------------------------------------------
 # Command-line selection (subset of the sweep above; see the docstring)
 # ------------------------------------------------------------
 # Parse `--flag value` pairs into overrides; each field is `nothing` when the
 # corresponding flag is absent, in which case the default above is used.
 function parse_selection(args)
-    methods = s_sel = nsteps = inits = frames = atols = rtols = nothing
+    methods = s_sel = nsteps = inits = frames = atols = rtols = nruns = nothing
     i = firstindex(args)
     while i <= lastindex(args)
         flag = args[i]
@@ -113,13 +120,15 @@ function parse_selection(args)
             atols = parse.(Float64, split(value, ','))
         elseif flag == "--gmres-rtol"
             rtols = parse.(Float64, split(value, ','))
+        elseif flag == "--nruns"
+            nruns = parse(Int, value)
         else
             throw(ArgumentError("unknown flag '$flag' (expected --method, --s, " *
-                "--nsteps, --init, --frame, --gmres-atol, or --gmres-rtol)"))
+                "--nsteps, --init, --frame, --gmres-atol, --gmres-rtol, or --nruns)"))
         end
         i += 2
     end
-    return (; methods, s_sel, nsteps, inits, frames, atols, rtols)
+    return (; methods, s_sel, nsteps, inits, frames, atols, rtols, nruns)
 end
 
 selection = parse_selection(ARGS)
@@ -130,7 +139,9 @@ selected_inits    = something(selection.inits, [initialCondition])
 selected_frames   = something(selection.frames, collect(all_frames))
 selected_atols    = something(selection.atols, collect(gmres_atols))
 selected_rtols    = something(selection.rtols, collect(gmres_rtols))
+selected_nRuns    = something(selection.nruns, nRuns)
 
+selected_nRuns >= 1 || throw(ArgumentError("nRuns must be ≥ 1; got $selected_nRuns"))
 for m in selected_methods
     m in all_methods ||
         throw(ArgumentError("unknown method ':$m'; choose from $all_methods"))
@@ -187,7 +198,7 @@ for initialCondition in selected_inits, frame in selected_frames, method in sele
             throw(ArgumentError("nsteps=$nsteps must be divisible by nsaves=$nsaves"))
         push!(configs, (;
             method, frame, s, Tmax, initialCondition, nOscLevels, nGuardLevels,
-            nsaves, gmresAtol, gmresRtol, nsteps,
+            nsaves, nRuns = selected_nRuns, gmresAtol, gmresRtol, nsteps,
         ))
     end
 end

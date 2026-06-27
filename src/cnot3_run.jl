@@ -30,12 +30,12 @@ function make_initial_condition(spec, qgd_prob)
 end
 
 # Solve every column with `solve!(c, stats)` (which records per-step GMRES
-# iteration counts into `stats`), returning the stacked history, the wall-clock
-# solve time, and the per-step GMRES iteration counts pooled over all steps of
-# all columns.  Used by the iterative (Filon-family) methods to expose how hard
-# the linear solves work; the explicit QGD Hermite method has no GMRES and so
-# returns an empty count vector.
-function solve_columns_with_stats(solve!, cols, stack_histories)
+# iteration counts into `stats`), returning the stacked history and the per-step
+# GMRES iteration counts pooled over all steps of all columns.  Used by the
+# iterative (Filon-family) methods to expose how hard the linear solves work; the
+# explicit QGD Hermite method has no GMRES and so returns an empty count vector.
+# Timing is handled by the caller (run_simulation), which repeats and averages.
+function solve_columns(solve!, cols, stack_histories)
     stats = FilonSolveStats()
     niters = Int[]
     solve_one = function (c)
@@ -43,8 +43,8 @@ function solve_columns_with_stats(solve!, cols, stack_histories)
         append!(niters, stats.gmres_niters)
         return h
     end
-    t_elapsed = @elapsed history = stack_histories(map(solve_one, cols))
-    return history, t_elapsed, niters
+    history = stack_histories(map(solve_one, cols))
+    return history, niters
 end
 
 # Summarize the pooled per-step GMRES iteration counts.  Returns `missing` for
@@ -59,11 +59,17 @@ end
 
 # Solve the ODE for one config and return a dictionary holding the saved history
 # (complex, N × (nsaves+1), on the shared `range(0, Tmax, nsaves+1)` grid), the
-# wall-clock time of the (post-compilation) solve, the saved times, summary
-# statistics of the per-step GMRES iteration counts (for the iterative methods;
-# `missing` for QGD Hermite, which has no linear solve), the git commit the run
-# was produced on (and whether the working tree was dirty), and the config fields
-# (so `collect_results` exposes the parameter columns directly).
+# wall-clock solve time averaged over `config.nRuns` repetitions (compilation
+# excluded — see below), the saved times, summary statistics of the per-step
+# GMRES iteration counts (for the iterative methods; `missing` for QGD Hermite,
+# which has no linear solve), the git commit the run was produced on (and whether
+# the working tree was dirty), and the config fields (so `collect_results`
+# exposes the parameter columns directly).
+#
+# Timing never includes compilation: each method's `do_solve(n)` closure is run
+# once at a tiny step count (nsaves) as a warm-up before the timed region, which
+# compiles the exact same function and keyword call site the full-length timed
+# solve uses (a different keyword set would compile separately, inside timing).
 #
 # Errors are deliberately *not* recorded here: they are computed downstream
 # against the Vern9 reference solution (see `cnot3_reference.jl`), so a run's
@@ -81,7 +87,6 @@ function run_simulation(config)
 
     order = 2 * (config.s + 1)
     nsteps = config.nsteps
-    save_every = div(nsteps, config.nsaves)
     t_saves = collect(range(0, config.Tmax, length = 1 + config.nsaves))
 
     # A single state vector solves to one N × (nsaves+1) history; the "basis"
@@ -97,50 +102,60 @@ function run_simulation(config)
     atol = config.gmresAtol
     rtol = config.gmresRtol
 
-    niters = Int[]        # per-step GMRES counts; stays empty for QGD Hermite
+    # Each branch defines a single closure `do_solve(n)` that solves the problem
+    # with `n` steps and returns (history, niters).  Running it once at the
+    # smallest valid step count (nsaves) as a warm-up compiles the *exact* code
+    # path — same function, same keyword call site — that the full-length timed
+    # solve then uses, so compilation never lands inside the timed region.
     if config.method == :hermite
-        solve_one = c -> eval_forward_complex_history(
-            qgd_prob, controls, pcof, c; order, nsteps, saveEveryNsteps = save_every)
-        # Warm-up to compile before timing.
-        eval_forward_complex_history(qgd_prob, controls, pcof, cols[1];
-                                     order, nsteps = config.nsaves, saveEveryNsteps = 1)
-        t_elapsed = @elapsed history = stack_histories(map(solve_one, cols))
+        do_solve = function (n)
+            hist = stack_histories(map(
+                c -> eval_forward_complex_history(qgd_prob, controls, pcof, c;
+                    order, nsteps = n, saveEveryNsteps = div(n, config.nsaves)), cols))
+            return hist, Int[]                  # QGD Hermite has no GMRES
+        end
     elseif config.method == :filon
         co = qgd_to_controlled_operator(qgd_prob, controls, pcof)
         freqs = qgd_ansatz_frequencies(qgd_prob)
-        filon_solve_hardcoded(co, cols[1], freqs, config.Tmax / 2, 2,
-                              config.s; save_final_only = true)            # warm-up
-        history, t_elapsed, niters = solve_columns_with_stats(
+        do_solve = (n) -> solve_columns(
             (c, stats) -> filon_solve_hardcoded(
-                co, c, freqs, config.Tmax / nsteps, nsteps, config.s;
-                save_every, stats, gmres_atol = atol, gmres_rtol = rtol),
+                co, c, freqs, config.Tmax / n, n, config.s;
+                save_every = div(n, config.nsaves), stats, gmres_atol = atol, gmres_rtol = rtol),
             cols, stack_histories)
     elseif config.method == :controlled_filon
         co = qgd_to_controlled_filon_operator(qgd_prob, controls, pcof)
         freqs = qgd_ansatz_frequencies(qgd_prob)
-        controlled_filon_solve(co, cols[1], freqs, config.Tmax / 2, 2,
-                               config.s; save_final_only = true)           # warm-up
-        history, t_elapsed, niters = solve_columns_with_stats(
+        do_solve = (n) -> solve_columns(
             (c, stats) -> controlled_filon_solve(
-                co, c, freqs, config.Tmax / nsteps, nsteps, config.s;
-                save_every, stats, gmres_atol = atol, gmres_rtol = rtol),
+                co, c, freqs, config.Tmax / n, n, config.s;
+                save_every = div(n, config.nsaves), stats, gmres_atol = atol, gmres_rtol = rtol),
             cols, stack_histories)
     elseif config.method == :controlled_hermite
         # The ω = 0 (Hermite) counterpart of the efficient controlled Filon
         # method: same full A(t) operator as :filon (carriers folded into the
         # controls), but each control matrix is applied only s+1 times per step.
         co = qgd_to_controlled_operator(qgd_prob, controls, pcof)
-        efficient_controlled_hermite_solve(co, cols[1], config.Tmax / 2, 2,
-                                           config.s; save_final_only = true) # warm-up
-        history, t_elapsed, niters = solve_columns_with_stats(
+        do_solve = (n) -> solve_columns(
             (c, stats) -> efficient_controlled_hermite_solve(
-                co, c, config.Tmax / nsteps, nsteps, config.s;
-                save_every, stats, gmres_atol = atol, gmres_rtol = rtol),
+                co, c, config.Tmax / n, n, config.s;
+                save_every = div(n, config.nsaves), stats, gmres_atol = atol, gmres_rtol = rtol),
             cols, stack_histories)
     else
         throw(ArgumentError("Invalid method '$(config.method)'. Must be " *
             ":hermite, :filon, :controlled_filon, or :controlled_hermite."))
     end
+
+    # Warm up (compile) outside the timed region, then time nRuns full-length
+    # repetitions and average.  The solve is deterministic, so history and the
+    # GMRES counts are identical across repetitions — only the wall-clock time is
+    # averaged (to suppress measurement noise); keep the last repetition's data.
+    do_solve(config.nsaves)
+    local history, niters
+    total_time = 0.0
+    for _ in 1:config.nRuns
+        total_time += @elapsed ((history, niters) = do_solve(nsteps))
+    end
+    t_elapsed = total_time / config.nRuns
 
     g = gmres_summary(niters)
 

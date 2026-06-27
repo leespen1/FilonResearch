@@ -25,6 +25,7 @@ nOscLevels = 3
 nGuardLevels = 1
 Tmax = 50.0
 nsaves = 4
+nRuns = 2          # exercise the timing-average path
 gmresAtol = 1e-13
 gmresRtol = 1e-13
 
@@ -34,7 +35,7 @@ for initialCondition in ("basis", "uniform")
         for s in (0, 1), e in 4:6
             push!(configs, (;
                 method, frame = "rwa", s, Tmax, initialCondition, nOscLevels,
-                nGuardLevels, nsaves, gmresAtol, gmresRtol, nsteps = 2^e,
+                nGuardLevels, nsaves, nRuns, gmresAtol, gmresRtol, nsteps = 2^e,
             ))
         end
     end
@@ -44,7 +45,7 @@ for frame in ("norwa", "lab")
     for method in (:hermite, :filon, :controlled_filon), e in 4:6
         push!(configs, (;
             method, frame, s = 0, Tmax, initialCondition = "uniform", nOscLevels,
-            nGuardLevels, nsaves, gmresAtol, gmresRtol, nsteps = 2^e,
+            nGuardLevels, nsaves, nRuns, gmresAtol, gmresRtol, nsteps = 2^e,
         ))
     end
 end
