@@ -67,6 +67,13 @@ t_rerun = @elapsed foreach(
     c -> process_convergence_config(run_simulation, c, prefix, outdir), configs)
 @printf("Re-run of %d configs took %.3f s (cache hits).\n", length(configs), t_rerun)
 
+# The plotting script only loads the Vern9 reference, so precompute it for the
+# frame/init it will plot (its defaults: rwa / basis) at the smoke problem size.
+println("\nComputing the Vern9 reference for the smoke problem ...")
+include(srcdir("cnot3_reference.jl"))
+vern9_reference(; frame = "rwa", initialCondition = "basis",
+                Nosc = nOscLevels, Nguard = nGuardLevels, Tmax = Tmax, nsaves = nsaves)
+
 # Drive the plotting script against the smoke data.
 println("\nRunning the plotting script on the smoke data ...")
 ENV["CNOT3_PREFIX"] = prefix

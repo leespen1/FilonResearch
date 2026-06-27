@@ -23,12 +23,11 @@ using DataFrames
 using LinearAlgebra
 using Printf
 using CairoMakie
-using FilonResearch
-using QuantumGateDesign
 
-include(srcdir("error_analysis.jl"))   # l2_integral_error_subsample
-include(srcdir("cnot3_run.jl"))        # problem builders, make_initial_condition
-include(srcdir("cnot3_reference.jl"))  # vern9_reference
+# Lightweight: this only reads jld2 (run histories + the cached reference) — it
+# does not pull in the ODE solver / problem builders.  The reference must already
+# be collected (see cnot3_collect_reference.jl).
+include(srcdir("error_analysis.jl"))   # l2_integral_error_subsample, load_vern9_reference, reference_errors
 
 CairoMakie.set_theme!(CairoMakie.theme_latexfonts())
 const inch = 96
@@ -89,8 +88,8 @@ const NOSC   = first(df).nOscLevels
 const NGUARD = first(df).nGuardLevels
 Tmax         = first(df).Tmax
 const NSAVES = first(df).nsaves
-ref = vern9_reference(; frame, initialCondition = init,
-                      Nosc = NOSC, Nguard = NGUARD, Tmax, nsaves = NSAVES)
+ref = load_vern9_reference(; frame, initialCondition = init,
+                           Nosc = NOSC, Nguard = NGUARD, Tmax, nsaves = NSAVES)
 println("Reference: Vern9 (abstol=reltol=1e-15), frame=$frame, init=$init")
 
 # l2_error is `missing` for final-only runs (single-column history); the plotted

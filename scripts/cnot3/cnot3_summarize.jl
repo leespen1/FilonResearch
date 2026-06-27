@@ -8,20 +8,18 @@
 #
 # Defaults: prefix = "cnot3Convergence", output = <this dir>/<prefix>_summary.csv.
 #
-# Errors are measured against a cached Vern9 reference for each
-# (frame, initialCondition); the first run of this script computes any missing
-# references (the slow step) and reuses them thereafter.
+# Errors are measured against the cached Vern9 reference for each
+# (frame, initialCondition); precompute them first with cnot3_collect_reference.jl
+# (this script only loads them, and errors if one is missing).
 
 using DrWatson
 @quickactivate "FilonExperiments"
 using DataFrames
 using Printf
 using LinearAlgebra: norm
-using FilonResearch
-using QuantumGateDesign
-include(srcdir("error_analysis.jl"))   # l2_integral_error_subsample
-include(srcdir("cnot3_run.jl"))        # problem builders, make_initial_condition
-include(srcdir("cnot3_reference.jl"))  # vern9_reference, reference_errors
+# Lightweight: reads jld2 only (no ODE solver).  The references must already be
+# collected (see cnot3_collect_reference.jl).
+include(srcdir("error_analysis.jl"))   # load_vern9_reference, reference_errors
 
 const prefix = length(ARGS) >= 1 ? ARGS[1] : "cnot3Convergence"
 const outcsv = length(ARGS) >= 2 ? ARGS[2] :
@@ -34,9 +32,9 @@ df = collect_results(outdir; black_list = String[])
 isempty(df) && error("no result files found in $outdir")
 
 # Cached Vern9 reference matching a run's frame / initial condition / problem size.
-reference_for(r) = vern9_reference(; frame = r.frame, initialCondition = r.initialCondition,
-                                   Nosc = r.nOscLevels, Nguard = r.nGuardLevels,
-                                   Tmax = r.Tmax, nsaves = r.nsaves)
+reference_for(r) = load_vern9_reference(; frame = r.frame, initialCondition = r.initialCondition,
+                                        Nosc = r.nOscLevels, Nguard = r.nGuardLevels,
+                                        Tmax = r.Tmax, nsaves = r.nsaves)
 
 rows = NamedTuple[]
 for r in eachrow(df)

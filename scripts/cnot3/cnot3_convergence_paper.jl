@@ -26,13 +26,10 @@ using DrWatson
 using DataFrames
 using LinearAlgebra
 using CairoMakie
-using FilonResearch
-using QuantumGateDesign
-using OrdinaryDiffEqVerner
 
-# Problem builders + make_initial_condition + qgd_to_controlled_operator.
-include(srcdir("cnot3_run.jl"))
-include(srcdir("cnot3_reference.jl"))   # vern9_reference
+# Lightweight: reads jld2 only (no ODE solver).  The references must already be
+# collected (see cnot3_collect_reference.jl).
+include(srcdir("error_analysis.jl"))   # load_vern9_reference
 
 CairoMakie.set_theme!(CairoMakie.theme_latexfonts())
 
@@ -69,8 +66,8 @@ const PAPER_PT_PER_IN = 72
 const PAPER_WIDTH_IN  = 5.125
 
 # Final-time Vern9 reference state for one frame (cached; see cnot3_reference.jl).
-paper_uref(frame) = vern9_reference(; frame, initialCondition = init, Nosc = NOSC,
-                                    Nguard = NGUARD, Tmax = TMAX, nsaves = NSAVES)["uref"]
+paper_uref(frame) = load_vern9_reference(; frame, initialCondition = init, Nosc = NOSC,
+                                         Nguard = NGUARD, Tmax = TMAX, nsaves = NSAVES)["uref"]
 
 # -----------------------------------------------------------------------------
 # Data: per-frame DataFrame with final-time error vs the frame's Vern9 reference.
