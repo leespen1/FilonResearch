@@ -17,34 +17,47 @@ problem from the High-Order Hermite Optimization (HOHO) paper:
                             same full A(t) as `:filon`, but applies each control
                             matrix only s+1 times per step.
 
-Each `(method, s, nsteps)` solve is cached individually via DrWatson's
-`produce_or_load`, so re-running only computes missing results.  Data collection
-and plotting are separate: this script only writes per-run histories; see
-`cnot3_plot.jl` for the figures.
+Each run is cached individually via DrWatson's `produce_or_load`, so re-running
+only computes missing results.  Each result file records the git commit it was
+produced on (and whether the working tree was dirty) for provenance, but the
+data directory is *not* namespaced by commit — runs are reused across commits.
+
+Data collection and plotting are separate: this script only writes per-run
+histories and timing/GMRES diagnostics.  Errors are computed downstream against a
+Vern9 reference solution (see `cnot3_summarize.jl` / `cnot3_plot.jl`); nothing
+about a run's accuracy is stored here.
 
 # Running a subset (e.g. one SLURM batch)
 
-With no arguments the full default sweep below runs (unchanged behaviour for a
-plain `julia --project cnot3_convergence_collect_data.jl`).  Optional flags
-narrow the sweep so a single job — local or on SLURM — can target a batch:
+With no arguments the full default sweep below runs.  Optional flags narrow the
+sweep so a single job — local or on SLURM — can target a batch:
 
   * `--method hermite,filon`   one or more of
                                `hermite|filon|controlled_filon|controlled_hermite`
   * `--s 0,1`                  order parameter(s) s   (order = 2(s+1))
   * `--nsteps 128,256,512`     explicit step counts (overrides the 2^e defaults)
   * `--init basis,uniform`     initial condition(s): `basis` (default, full
-                               essential basis / gate states), `uniform`, or `eN`
+                               essential basis / gate states) or `uniform`
+                               (uniform superposition)
   * `--frame rwa,norwa,lab`    frame(s) the dynamics are posed in: `rwa`
                                (rotating frame + RWA, the original HOHO
                                setting), `norwa` (rotating frame keeping the
                                counter-rotating control terms), `lab`
                                (laboratory frame)
+  * `--gmres-atol 1e-13,1e-10` GMRES absolute tolerance(s) for the iterative
+                               (Filon-family) solvers
+  * `--gmres-rtol 1e-13,1e-10` GMRES relative tolerance(s)
 
     julia --project cnot3_convergence_collect_data.jl --method hermite --nsteps 128,256,512
-    sbatch cnot3_convergence_collect_data.sb --method hermite --init uniform
+    sbatch cnot3_convergence_collect_data.sb --method filon --gmres-rtol 1e-13,1e-8
 
-Because every run is cached by its config, subsets compose: running a few
-batches separately fills the same data directory as one full sweep.
+The GMRES tolerances are part of each run's identity (they appear in the
+savename), so a tolerance sweep produces distinct cached files.  They only affect
+the iterative methods; sweep `--method filon,controlled_filon,controlled_hermite`
+when varying tolerance to avoid recomputing identical `:hermite` runs.
+
+Because every run is cached by its config, subsets compose: running a few batches
+separately fills the same data directory as one full sweep.
 """
 
 # ============================================================
@@ -56,13 +69,11 @@ nOscLevels = 10
 nGuardLevels = 2
 Tmax = 550.0
 
-refinementFactor = 2
-
 # Number of saved time points (after the initial condition).  Every nsteps is a
 # power of two ≥ this, so nsaves divides nsteps and the saved grid is shared.
 nsaves = 16
-# "basis" (full essential computational basis — the gate states QGD propagates),
-# "uniform" (uniform superposition), or "eN" (the N-th basis vector).
+# "basis" (full essential computational basis — the gate states QGD propagates)
+# or "uniform" (uniform superposition).
 initialCondition = "basis"
 
 all_methods = (:hermite, :filon, :controlled_filon, :controlled_hermite)
@@ -72,13 +83,17 @@ s_values = (0, 1, 2)                       # order = 2(s+1) ∈ {2,4,6}
 filon_step_exponents   = 4:16              # nsteps = 2^e for Filon / controlled-Filon
 hermite_step_exponents = 4:22              # Hermite is cheap per step, push it further
 
+# GMRES tolerances for the iterative solvers (a single tight value by default).
+gmres_atols = (1e-13,)
+gmres_rtols = (1e-13,)
+
 # ------------------------------------------------------------
 # Command-line selection (subset of the sweep above; see the docstring)
 # ------------------------------------------------------------
-# Parse `--flag value` pairs into an override for methods / s / nsteps; each is
-# `nothing` when the flag is absent, in which case the default above is used.
+# Parse `--flag value` pairs into overrides; each field is `nothing` when the
+# corresponding flag is absent, in which case the default above is used.
 function parse_selection(args)
-    methods = s_sel = nsteps = inits = frames = nothing
+    methods = s_sel = nsteps = inits = frames = atols = rtols = nothing
     i = firstindex(args)
     while i <= lastindex(args)
         flag = args[i]
@@ -94,13 +109,17 @@ function parse_selection(args)
             inits = String.(split(value, ','))
         elseif flag in ("--frame", "--frames")
             frames = String.(split(value, ','))
+        elseif flag == "--gmres-atol"
+            atols = parse.(Float64, split(value, ','))
+        elseif flag == "--gmres-rtol"
+            rtols = parse.(Float64, split(value, ','))
         else
-            throw(ArgumentError(
-                "unknown flag '$flag' (expected --method, --s, --nsteps, --init, or --frame)"))
+            throw(ArgumentError("unknown flag '$flag' (expected --method, --s, " *
+                "--nsteps, --init, --frame, --gmres-atol, or --gmres-rtol)"))
         end
         i += 2
     end
-    return (; methods, s_sel, nsteps, inits, frames)
+    return (; methods, s_sel, nsteps, inits, frames, atols, rtols)
 end
 
 selection = parse_selection(ARGS)
@@ -109,15 +128,16 @@ selected_methods  = something(selection.methods, collect(all_methods))
 selected_s_values = something(selection.s_sel, collect(s_values))
 selected_inits    = something(selection.inits, [initialCondition])
 selected_frames   = something(selection.frames, collect(all_frames))
+selected_atols    = something(selection.atols, collect(gmres_atols))
+selected_rtols    = something(selection.rtols, collect(gmres_rtols))
 
 for m in selected_methods
     m in all_methods ||
         throw(ArgumentError("unknown method ':$m'; choose from $all_methods"))
 end
 for ic in selected_inits
-    ic in ("basis", "uniform") || occursin(r"^e\d+$", ic) ||
-        throw(ArgumentError("unknown initial condition '$ic'; " *
-            "choose from \"basis\", \"uniform\", or \"eN\""))
+    ic in ("basis", "uniform") ||
+        throw(ArgumentError("unknown initial condition '$ic'; choose \"basis\" or \"uniform\""))
 end
 for fr in selected_frames
     fr in all_frames ||
@@ -143,7 +163,7 @@ end
 @everywhere include(srcdir("cnot3_run.jl"))        # make_initial_condition, run_simulation
 
 @everywhere const prefix = "cnot3Convergence"
-@everywhere const outdir = commit_datadir(prefix)
+@everywhere const outdir = datadir(prefix)
 
 @everywhere println("[", myid(), "] Finished setting up helper functions.")
 @everywhere flush(stdout)
@@ -153,7 +173,8 @@ end
 # ============================================================
 
 configs = NamedTuple[]
-for initialCondition in selected_inits, frame in selected_frames, method in selected_methods
+for initialCondition in selected_inits, frame in selected_frames, method in selected_methods,
+        gmresAtol in selected_atols, gmresRtol in selected_rtols
     # Explicit --nsteps overrides the per-method 2^e defaults.
     step_counts = if selection.nsteps !== nothing
         selection.nsteps
@@ -166,7 +187,7 @@ for initialCondition in selected_inits, frame in selected_frames, method in sele
             throw(ArgumentError("nsteps=$nsteps must be divisible by nsaves=$nsaves"))
         push!(configs, (;
             method, frame, s, Tmax, initialCondition, nOscLevels, nGuardLevels,
-            nsaves, refinementFactor, nsteps,
+            nsaves, gmresAtol, gmresRtol, nsteps,
         ))
     end
 end
