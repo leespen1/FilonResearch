@@ -58,8 +58,8 @@ function gmres_summary(niters)
 end
 
 # Solve the ODE for one config and return a dictionary holding the saved history
-# (complex; by default just the N × 1 final state — see `saveFinalOnly` — or the
-# full N × (nsaves+1) grid when `saveFinalOnly = false`), the
+# (complex; by default the full N × (nsaves+1) grid, or just the N × 1 final
+# state when `saveFinalOnly = true`), the
 # wall-clock solve time averaged over `config.nRuns` repetitions (compilation
 # excluded — see below), the saved times, summary statistics of the per-step
 # GMRES iteration counts (for the iterative methods; `missing` for QGD Hermite,
@@ -88,11 +88,9 @@ function run_simulation(config)
 
     order = 2 * (config.s + 1)
     nsteps = config.nsteps
-    # By default only the final state is saved: the convergence study measures
-    # final-time error against the reference, so the intermediate history is
-    # unnecessary, and skipping it makes the solve cheaper and the timing reflect
-    # the production "just give me the gate" use.  Set saveFinalOnly = false to
-    # keep the full N × (nsaves+1) save grid (needed for the l2-integral error).
+    # `saveFinalOnly = true` keeps only the final state instead of the full
+    # N × (nsaves+1) save grid.  The grid is the default (the l2-integral error
+    # needs it); final-only is cheaper when only the final-time error matters.
     sfo = config.saveFinalOnly
     t_saves = sfo ? [config.Tmax] : collect(range(0, config.Tmax, length = 1 + config.nsaves))
 

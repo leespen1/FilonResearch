@@ -50,9 +50,9 @@ sweep so a single job — local or on SLURM — can target a batch:
   * `--nruns 5`                repeat each solve this many times and average the
                                timing (default 1); the result history is
                                unchanged, only the recorded t_elapsed is averaged
-  * `--save-final-only false`  save only the final state (default true) or the
-                               full N × (nsaves+1) history (false, needed to
-                               compute the l2-integral error)
+  * `--save-final-only true`   save only the final state instead of the full
+                               N × (nsaves+1) history (the default, false, which
+                               the l2-integral error needs)
 
     julia --project cnot3_convergence_collect_data.jl --method hermite --nsteps 128,256,512
     sbatch cnot3_convergence_collect_data.sb --method filon --gmres-rtol 1e-13,1e-8
@@ -97,10 +97,9 @@ gmres_rtols = (1e-13,)
 # result history is identical across repetitions, so this only sharpens timing.
 nRuns = 1
 
-# Save only the final state by default (the convergence study measures final-time
-# error against the reference).  Set false to keep the full save grid for the
-# l2-integral error.
-saveFinalOnly = true
+# Whether to save only the final state (true) or the full N × (nsaves+1) save
+# grid (false, the default — the l2-integral error needs the full grid).
+saveFinalOnly = false
 
 # ------------------------------------------------------------
 # Command-line selection (subset of the sweep above; see the docstring)

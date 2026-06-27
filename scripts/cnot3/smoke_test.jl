@@ -30,8 +30,9 @@ gmresAtol = 1e-13
 gmresRtol = 1e-13
 
 configs = NamedTuple[]
-# rwa: full save grid (saveFinalOnly = false) so the l2-error / plotting path is
-# exercised; the other frames use the final-only default.
+# Exercise both save modes: rwa keeps the full save grid (saveFinalOnly = false,
+# the default) so the l2-error / plotting path runs; the other frames below use
+# saveFinalOnly = true.
 for initialCondition in ("basis", "uniform")
     for method in (:hermite, :filon, :controlled_filon)
         for s in (0, 1), e in 4:6
