@@ -9,7 +9,7 @@
 # preview) to both the DrWatson plots dir and the Overleaf Figures dir.
 #
 # Reference: like the Rabi figure, each frame's error is measured against a Vern9
-# (adaptive RK) solution of that frame's own ODE at abstol=reltol=1e-13 — an
+# (adaptive RK) solution of that frame's own ODE at abstol=reltol=1e-15 — an
 # independent reference, not the finest Hermite run.  The RWA modeling error (the
 # firebrick ceiling) is the Vern9 RWA-frame vs Vern9 no-RWA-frame final-state
 # difference: the two solve the same rotating-frame dynamics differing only by the

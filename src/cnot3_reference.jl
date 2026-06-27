@@ -3,7 +3,7 @@ Vern9 reference solution for the CNOT3 convergence experiment.
 
 Every run's error is measured against an independent, high-accuracy reference:
 the same A(t) dynamics integrated with the adaptive Verner 9 Runge–Kutta method
-at a tight tolerance (1e-13 by default).  The reference is cached on disk
+at a tight tolerance (1e-15 by default).  The reference is cached on disk
 (`datadir("cnot3_vern9ref")`), so the expensive solve happens only once per
 `(frame, initialCondition, …)` and is shared by the summarize, plot, and paper
 scripts.
@@ -22,7 +22,7 @@ using LinearAlgebra: mul!, norm
 # shared `range(0, Tmax, nsaves+1)` grid.  Columns are stacked vertically to match
 # the layout `run_simulation` produces for the "basis" initial condition.
 function compute_vern9_reference(; frame, initialCondition, Nosc, Nguard, Tmax,
-                                 nsaves, abstol = 1e-13, reltol = 1e-13)
+                                 nsaves, abstol = 1e-15, reltol = 1e-15)
     fr = Symbol(frame)
     qgd_prob = cnot3_hoho_qgd_prob(N_osc_levels = Nosc, N_guard_levels = Nguard,
                                    Tmax = Tmax, frame = fr)
@@ -50,7 +50,7 @@ end
 
 """
     vern9_reference(; frame, initialCondition, Nosc, Nguard, Tmax, nsaves,
-                    abstol = 1e-13, reltol = 1e-13) -> Dict
+                    abstol = 1e-15, reltol = 1e-15) -> Dict
 
 Cached Vern9 reference for one configuration.  Returns a dictionary with
 
@@ -62,7 +62,7 @@ Cached in a SEPARATE data dir (`datadir("cnot3_vern9ref")`, not under the run
 prefix) so `collect_results` over the run data never picks these files up.
 """
 function vern9_reference(; frame, initialCondition, Nosc, Nguard, Tmax, nsaves,
-                         abstol = 1e-13, reltol = 1e-13)
+                         abstol = 1e-15, reltol = 1e-15)
     cfg = Dict("frame" => string(frame), "initialCondition" => string(initialCondition),
                "abstol" => abstol, "reltol" => reltol, "Nosc" => Nosc,
                "Nguard" => Nguard, "Tmax" => Tmax, "nsaves" => nsaves)

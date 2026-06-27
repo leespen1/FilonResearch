@@ -93,7 +93,7 @@ ref  = vern9_reference(; frame, initialCondition = init,
                        Nosc = NOSC, Nguard = NGUARD, Tmax, nsaves = NSAVES)
 uref = ref["uref"]
 href = ref["href"]
-println("Reference: Vern9 (abstol=reltol=1e-13), frame=$frame, init=$init")
+println("Reference: Vern9 (abstol=reltol=1e-15), frame=$frame, init=$init")
 
 df.final_error = [norm(h[:, end] .- uref) for h in df.history]
 df.l2_error    = [l2_integral_error_subsample(h, href, Tmax) for h in df.history]
