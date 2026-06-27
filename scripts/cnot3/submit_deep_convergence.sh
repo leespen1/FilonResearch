@@ -3,11 +3,13 @@
 # for both the essential-basis and uniform-superposition initial conditions, at
 # GMRES tolerance 1e-15 and nRuns=1.
 #
-# Timestep ranges per (frame, method, s) are chosen from the previous campaign's
-# error data so we start just before the asymptotic regime (a little
-# pre-asymptotic data is fine) and go deep enough that every method reaches at
-# least ~1e-3 relative final-state error — much deeper for low-order Hermite,
-# whose lab-frame error must resolve the carriers and so converges slowly.
+# Timestep ranges per (frame, method, s) start just before the asymptotic regime
+# (a little pre-asymptotic data is fine) and go deep enough that every method
+# reaches at least ~1e-3 relative final-state error.  Low-order Hermite in the
+# lab frame must resolve the carriers and converges very slowly: order-2 (s=0)
+# only enters its asymptotic regime around 2^26 and reaches 1e-3 near 2^30
+# (verified against the 1e-15 Vern9 reference), so it is pushed that deep — a
+# multi-day run for the basis initial condition.
 #
 # Every (frame, method, s, nsteps) solve is cached individually by
 # produce_or_load, so completed configs survive a job hitting its wall-clock
@@ -77,9 +79,9 @@ sub lab-herm-s2    general-long 11:59:00 16 1 \
 # separate jobs / wall times.  Each nsteps is cached as it finishes, so even if
 # 2^28 does not complete, 2^25..2^27 are saved.
 # ---------------------------------------------------------------------------
-sub lab-herm-s0-deep-basis   general-long 71:59:00 8 1 \
-    --frame lab --method hermite,controlled_hermite --s 0 --nsteps "$(gen 25 28)" --init basis
-sub lab-herm-s0-deep-uniform general-long 23:59:00 8 1 \
-    --frame lab --method hermite,controlled_hermite --s 0 --nsteps "$(gen 25 28)" --init uniform
+sub lab-herm-s0-deep-basis   general-long 143:59:00 12 1 \
+    --frame lab --method hermite,controlled_hermite --s 0 --nsteps "$(gen 25 30)" --init basis
+sub lab-herm-s0-deep-uniform general-long  47:59:00 12 1 \
+    --frame lab --method hermite,controlled_hermite --s 0 --nsteps "$(gen 25 30)" --init uniform
 
 echo "# submitted (or dry-ran) all CNOT3 deep-convergence batches" >&2
