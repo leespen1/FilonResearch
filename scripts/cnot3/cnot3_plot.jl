@@ -130,7 +130,7 @@ Combined log-log convergence panel: colour = method, marker = order s, with
 dotted-grey O(Δtᵖ) guide lines anchored to the first available curve of each
 order.  Saves png/svg/pdf to `plotsdir("cnot3")`.
 """
-function make_convergence_figure(df, methods; basename = "cnot3_convergence_$(frame)")
+function make_convergence_figure(df, methods; basename = "cnot3_convergence_$(frame)_$(init)")
     fig = Figure(size = (7.5inch, 4.6inch), fontsize = 11)
     Label(fig[0, 1:2],
           L"\textrm{CNOT3\;gate\;convergence}\;\;(N_{\mathrm{osc}}=%$(NOSC),\;T=%$(Tmax),\;\textrm{%$(frame)\;frame})";
@@ -199,7 +199,7 @@ function make_convergence_figure(df, methods; basename = "cnot3_convergence_$(fr
 end
 
 "Wall-clock time vs nsteps (log-log), same colour/marker scheme."
-function make_timing_figure(df, methods; basename = "cnot3_timing_$(frame)")
+function make_timing_figure(df, methods; basename = "cnot3_timing_$(frame)_$(init)")
     fig = Figure(size = (7.5inch, 4.6inch), fontsize = 11)
     Label(fig[0, 1:2], L"\textrm{CNOT3\;wall-clock\;time}\;\;(\textrm{%$(frame)\;frame})";
           fontsize = 13, padding = (0, 0, 6, 0))
@@ -232,7 +232,7 @@ end
 Convergence panel against the time step Δt = Tmax/nsteps (instead of nsteps):
 error decreases as Δt → 0 (curves descend to the left), with O(Δtᵖ) guides.
 """
-function make_stepsize_figure(df, methods; basename = "cnot3_stepsize_$(frame)")
+function make_stepsize_figure(df, methods; basename = "cnot3_stepsize_$(frame)_$(init)")
     fig = Figure(size = (7.5inch, 4.6inch), fontsize = 11)
     Label(fig[0, 1:2],
           L"\textrm{CNOT3\;gate\;convergence}\;\;(N_{\mathrm{osc}}=%$(NOSC),\;T=%$(Tmax),\;\textrm{%$(frame)\;frame})";
@@ -295,7 +295,7 @@ Work–precision (efficiency) diagram: final-time error vs wall-clock solve time
 log-log.  Down-and-to-the-left is better (accurate AND cheap); the leftmost
 curve at a given error level is the most efficient method.
 """
-function make_workprecision_figure(df, methods; basename = "cnot3_workprecision_$(frame)")
+function make_workprecision_figure(df, methods; basename = "cnot3_workprecision_$(frame)_$(init)")
     fig = Figure(size = (7.5inch, 4.6inch), fontsize = 11)
     Label(fig[0, 1:2],
           L"\textrm{CNOT3\;work-precision}\;\;(\textrm{%$(frame)\;frame})";
@@ -344,7 +344,7 @@ solve works: flat and small in the rotating frames, but pinned at the iteration
 cap in the lab-frame coarse-step blowup region and only dropping to a few once
 Δt is fine enough to make each step's system well-conditioned.
 """
-function make_gmres_figure(df, methods; basename = "cnot3_gmres_$(frame)")
+function make_gmres_figure(df, methods; basename = "cnot3_gmres_$(frame)_$(init)")
     iter_methods = [m for m in methods if m != :hermite]
     "gmres_mean" in names(df) || (println("  (no gmres_mean column; skipping GMRES figure)"); return nothing)
     fig = Figure(size = (7.5inch, 4.6inch), fontsize = 11)
