@@ -42,44 +42,67 @@ function filon_moments(degree::Integer, w::Real, a::Real=-1, b::Real=1)
     return moments
 end
 
+# The Hermite cardinal polynomials ℓ_{k,j} on [a,b] depend only on (s, a, b), NOT
+# on the frequency ω — but `filon_weights` is called once per frequency (and, for
+# the controlled methods, once per carrier on top of that).  Rebuilding the
+# cardinals (an LU solve, in `hermite_interpolating_polynomial`) on every call
+# dominated the weight-setup cost, so cache their coefficient vectors by (s,a,b).
+const _CARDINAL_CACHE = Dict{Tuple{Int,Float64,Float64},
+                             Tuple{Vector{Vector{Float64}},Vector{Vector{Float64}}}}()
+const _CARDINAL_LOCK = ReentrantLock()
+
+# Left/right Hermite cardinal coefficient vectors for order `s` on `[a,b]`:
+# `ca[1+i]` interpolates f⁽ⁱ⁾(a) = δ (zero at b); `cb[1+i]` the mirror at b.
+function _filon_cardinal_coeffs(s::Integer, a::Real, b::Real)
+    key = (Int(s), Float64(a), Float64(b))
+    lock(_CARDINAL_LOCK) do
+        get!(_CARDINAL_CACHE, key) do
+            ca = Vector{Vector{Float64}}(undef, 1+s)
+            cb = Vector{Vector{Float64}}(undef, 1+s)
+            fa = zeros(Int, 1+s); fb = zeros(Int, 1+s)
+            for i in 0:s
+                fa .= 0; fb .= 0; fa[1+i] = 1
+                ca[1+i] = Polynomials.coeffs(hermite_interpolating_polynomial(a, b, fa, fb))
+                fa .= 0; fb .= 0; fb[1+i] = 1
+                cb[1+i] = Polynomials.coeffs(hermite_interpolating_polynomial(a, b, fa, fb))
+            end
+            return (ca, cb)
+        end
+    end
+end
+
 """
 Compute the weights
-    
+
     b_{k,j}(\\omega) = I_\\omega[\\ell_{k,j}] = \\int_a^b \\ell_{k,j}(x)e^{i\\omega x} dx
+
+The Hermite cardinal polynomials ℓ_{k,j} are frequency-independent and cached by
+(s, a, b); only the moments μ_n(ω) are recomputed per call.
 """
 function filon_weights(w::Real, s::Integer, a::Real=-1, b::Real=1)
     degree = 2*s+1
     moments = filon_moments(degree, w, a, b)
-
     T = promote_type(typeof(float(w)), typeof(float(a)), typeof(float(b)))
+    ca, cb = _filon_cardinal_coeffs(s, a, b)
 
     weights_a = Vector{Complex{T}}(undef, 1+s)
     weights_b = Vector{Complex{T}}(undef, 1+s)
-
-    fa_derivs = zeros(Int64, 1+s)
-    fb_derivs = zeros(Int64, 1+s)
-    
-    # Note: mapreduce(*, +, v1, v2) is safer than sum(v1 .* v2) here beacuse
-    # coeffs(ℓ_ai) may be shorter than moments due to ℓ_ai not having max degree
+    # Manual dot over the overlapping length (coeffs may be shorter than moments):
+    # the two-iterable `mapreduce(*, +, moments, coeffs)` allocated on every call.
     for i in 0:s
-        # Setup f⁽ʲ⁾(a) = δᵢⱼ, f⁽ʲ⁾(b) = 0
-        fa_derivs .= 0 
-        fb_derivs .= 0
-        fa_derivs[1+i] = 1
-        ℓ_ai = hermite_interpolating_polynomial(a, b, fa_derivs, fb_derivs)
-        weights_a[1+i] = mapreduce(*, +, moments, Polynomials.coeffs(ℓ_ai))
-        #weights_a[1+i] = sum(moments .* Polynomials.coeffs(ℓ_ai))
-         
-        # Setup f⁽ʲ⁾(a) = 0, f⁽ʲ⁾(b) = δᵢⱼ
-        fa_derivs .= 0
-        fb_derivs .= 0
-        fb_derivs[1+i] = 1
-        ℓ_bi = hermite_interpolating_polynomial(a, b, fa_derivs, fb_derivs)
-        weights_b[1+i] = mapreduce(*, +, moments, Polynomials.coeffs(ℓ_bi))
-        #weights_b[1+i] = sum(moments .* Polynomials.coeffs(ℓ_bi))
+        weights_a[1+i] = _dot_min(moments, ca[1+i])
+        weights_b[1+i] = _dot_min(moments, cb[1+i])
     end
-
     return weights_a, weights_b
+end
+
+# Σ u[k]·v[k] over the overlapping length, allocation-free.
+@inline function _dot_min(u, v)
+    acc = zero(promote_type(eltype(u), eltype(v)))
+    @inbounds for k in 1:min(length(u), length(v))
+        acc += u[k] * v[k]
+    end
+    return acc
 end
 
 """
