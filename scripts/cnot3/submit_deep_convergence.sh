@@ -51,12 +51,18 @@ sub rot-herm-s12 general-short 3:59:00 16 1 \
 # Lab frame, carrier-folding Filon methods: reach 1e-3 by ~2^18, swept a bit
 # deeper to the round-off floor.  GMRES at 1e-15 is dearer, so general-long.
 # ---------------------------------------------------------------------------
-sub lab-filon-s01 general-long 11:59:00 16 1 \
-    --frame lab --method filon --s 0,1 --nsteps "$(gen 14 21)" --init basis,uniform
+# s=0 is swept as deep as the carrier-resolving Hermite (below) so the curves
+# span the same Δt range: filon all the way to 2^30; controlled_filon is GMRES-
+# bound (~1.8 ms/step) so 2^30 would take ~3 weeks — capped at 2^27 (the deepest
+# that fits the 7-day partition).
+sub lab-filon-s0  general-long 119:59:00 12 1 \
+    --frame lab --method filon --s 0 --nsteps "$(gen 14 30)" --init basis,uniform
+sub lab-filon-s1  general-long 11:59:00 16 1 \
+    --frame lab --method filon --s 1 --nsteps "$(gen 14 21)" --init basis,uniform
 sub lab-filon-s2  general-long 11:59:00 16 1 \
     --frame lab --method filon --s 2 --nsteps "$(gen 13 20)" --init basis,uniform
-sub lab-cf-s0     general-long 11:59:00 16 1 \
-    --frame lab --method controlled_filon --s 0 --nsteps "$(gen 12 20)" --init basis,uniform
+sub lab-cf-s0     general-long 95:59:00 14 1 \
+    --frame lab --method controlled_filon --s 0 --nsteps "$(gen 12 27)" --init basis,uniform
 sub lab-cf-s1     general-long 11:59:00 16 1 \
     --frame lab --method controlled_filon --s 1 --nsteps "$(gen 14 20)" --init basis,uniform
 sub lab-cf-s2     general-long 23:59:00 12 1 \
