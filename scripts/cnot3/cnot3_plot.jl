@@ -41,20 +41,20 @@ const init = get(ENV, "CNOT3_INIT", "basis")
 # and its own figure.  Override with CNOT3_FRAME ("rwa", "norwa", or "lab").
 const frame = get(ENV, "CNOT3_FRAME", "rwa")
 
-# Display order / labels / styling for the methods.  "Hermite" is the
-# controlled-Hermite method (the ω = 0 Filon), the FilonResearch implementation —
-# the QGD `:hermite` runs are collected but not shown here.  Colours match the
-# paper figure (cnot3_convergence_paper.jl).
-const METHOD_ORDER  = (:filon, :controlled_filon, :controlled_hermite)
+# Display order / labels / styling for the methods (the three efficient solvers).
+# "Hermite" is the controlled-Hermite (the ω = 0 Filon).  Any `Naive*` runs in the
+# data are simply not listed here, so they are ignored.  Colours match the paper
+# figure (cnot3_convergence_paper.jl).
+const METHOD_ORDER  = (:Filon, :ControlledFilon, :Hermite)
 const METHOD_LABELS = Dict(
-    :filon              => "Filon",
-    :controlled_filon   => "Controlled-Filon",
-    :controlled_hermite => "Hermite",
+    :Filon           => "Filon",
+    :ControlledFilon => "Controlled-Filon",
+    :Hermite         => "Hermite",
 )
 const SVALS         = (0, 1, 2)
-const METHOD_COLORS = Dict(:filon              => Makie.wong_colors()[1],
-                           :controlled_filon   => Makie.wong_colors()[2],
-                           :controlled_hermite => Makie.wong_colors()[3])
+const METHOD_COLORS = Dict(:Filon           => Makie.wong_colors()[1],
+                           :ControlledFilon => Makie.wong_colors()[2],
+                           :Hermite         => Makie.wong_colors()[3])
 const ORDER_MARKERS = (:circle, :rect, :diamond)
 
 # -----------------------------------------------------------------------------
@@ -65,7 +65,7 @@ const ORDER_MARKERS = (:circle, :rect, :diamond)
 const ERROR_WINDOW = (1e-13, 1e1)
 # Optionally restrict the timestep range, globally or per method.  `nothing`
 # means "no restriction".
-const NSTEPS_WINDOW = Dict{Symbol,Any}()   # e.g. :filon => (2^4, 2^14)
+const NSTEPS_WINDOW = Dict{Symbol,Any}()   # e.g. :Filon => (2^4, 2^14)
 
 # -----------------------------------------------------------------------------
 # Load + derive errors
@@ -349,7 +349,7 @@ cap in the lab-frame coarse-step blowup region and only dropping to a few once
 Δt is fine enough to make each step's system well-conditioned.
 """
 function make_gmres_figure(df, methods; basename = "cnot3_gmres_$(frame)_$(init)")
-    iter_methods = [m for m in methods if m != :hermite]
+    iter_methods = methods   # every method here is a GMRES solver
     "gmres_mean" in names(df) || (println("  (no gmres_mean column; skipping GMRES figure)"); return nothing)
     fig = Figure(size = (7.5inch, 4.6inch), fontsize = 11)
     Label(fig[0, 1:2], L"\textrm{CNOT3\;GMRES\;iterations\;per\;step}\;\;(\textrm{%$(frame)\;frame})";

@@ -62,10 +62,9 @@ end
 # state when `saveFinalOnly = true`), the
 # wall-clock solve time averaged over `config.nRuns` repetitions (compilation
 # excluded — see below), the saved times, summary statistics of the per-step
-# GMRES iteration counts (for the iterative methods; `missing` for QGD Hermite,
-# which has no linear solve), the git commit the run was produced on (and whether
-# the working tree was dirty), and the config fields (so `collect_results`
-# exposes the parameter columns directly).
+# GMRES iteration counts (every method here is a FilonResearch GMRES solver), the
+# git commit the run was produced on (and whether the working tree was dirty), and
+# the config fields (so `collect_results` exposes the parameter columns directly).
 #
 # Timing never includes compilation: each method's `do_solve(n)` closure is run
 # once at a tiny step count (nsaves) as a warm-up before the timed region, which
@@ -86,7 +85,6 @@ function run_simulation(config)
     initial_condition = make_initial_condition(config.initialCondition, qgd_prob)
     controls, pcof = cnot3_hoho_controls_and_pcof(; frame)
 
-    order = 2 * (config.s + 1)
     nsteps = config.nsteps
     # `saveFinalOnly = true` keeps only the final state instead of the full
     # N × (nsaves+1) save grid.  The grid is the default (the l2-integral error
@@ -108,52 +106,44 @@ function run_simulation(config)
     atol = config.gmresAtol
     rtol = config.gmresRtol
 
-    # Each branch defines a single closure `do_solve(n)` that solves the problem
-    # with `n` steps and returns (history, niters).  Running it once at the
-    # smallest valid step count (nsaves) as a warm-up compiles the *exact* code
-    # path — same function, same keyword call site — that the full-length timed
-    # solve then uses, so compilation never lands inside the timed region.
-    if config.method == :hermite
-        do_solve = function (n)
-            # saveEveryNsteps = n saves only the endpoints; keep the final column.
-            se = sfo ? n : div(n, config.nsaves)
-            hist = stack_histories(map(cols) do c
-                h = eval_forward_complex_history(qgd_prob, controls, pcof, c;
-                        order, nsteps = n, saveEveryNsteps = se)
-                sfo ? h[:, end] : h
-            end)
-            return hist, Int[]                  # QGD Hermite has no GMRES
-        end
-    elseif config.method == :filon
-        co = qgd_to_controlled_operator(qgd_prob, controls, pcof)
-        freqs = qgd_ansatz_frequencies(qgd_prob)
-        do_solve = (n) -> solve_columns(
-            (c, stats) -> filon_solve_hardcoded(
-                co, c, freqs, config.Tmax / n, n, config.s; save_final_only = sfo,
-                save_every = div(n, config.nsaves), stats, gmres_atol = atol, gmres_rtol = rtol),
-            cols, stack_histories)
-    elseif config.method == :controlled_filon
-        co = qgd_to_controlled_filon_operator(qgd_prob, controls, pcof)
-        freqs = qgd_ansatz_frequencies(qgd_prob)
-        do_solve = (n) -> solve_columns(
-            (c, stats) -> controlled_filon_solve(
-                co, c, freqs, config.Tmax / n, n, config.s; save_final_only = sfo,
-                save_every = div(n, config.nsaves), stats, gmres_atol = atol, gmres_rtol = rtol),
-            cols, stack_histories)
-    elseif config.method == :controlled_hermite
-        # The ω = 0 (Hermite) counterpart of the efficient controlled Filon
-        # method: same full A(t) operator as :filon (carriers folded into the
-        # controls), but each control matrix is applied only s+1 times per step.
-        co = qgd_to_controlled_operator(qgd_prob, controls, pcof)
-        do_solve = (n) -> solve_columns(
-            (c, stats) -> efficient_controlled_hermite_solve(
-                co, c, config.Tmax / n, n, config.s; save_final_only = sfo,
-                save_every = div(n, config.nsaves), stats, gmres_atol = atol, gmres_rtol = rtol),
-            cols, stack_histories)
+    sv    = config.s
+    co    = qgd_to_controlled_operator(qgd_prob, controls, pcof)   # Hermite + Filon
+    freqs = qgd_ansatz_frequencies(qgd_prob)
+
+    # Each method is a `step(c, Δt, n, stats)` advancing one column with its solver
+    # and recording GMRES stats.  Each `Naive*` / non-`Naive` pair is the same
+    # method to ~1e-14; the non-Naive ("efficient") variants reorganize the
+    # operator apply (each control matrix applied s+1 times) — a large win for the
+    # ControlledFilon and Hermite families, while for plain Filon the drift is
+    # diagonal so the efficient apply is not faster (both are offered regardless).
+    # Wrapping the solver in one closure makes the warm-up and the timed solve use
+    # the identical keyword call site, so compilation stays out of the timed region.
+    if config.method === :NaiveHermite
+        step = (c, Δt, n, stats) -> hermite_solve_hardcoded(co, c, Δt, n, sv;
+            save_final_only = sfo, save_every = div(n, config.nsaves), stats, gmres_atol = atol, gmres_rtol = rtol)
+    elseif config.method === :Hermite
+        step = (c, Δt, n, stats) -> efficient_controlled_hermite_solve(co, c, Δt, n, sv;
+            save_final_only = sfo, save_every = div(n, config.nsaves), stats, gmres_atol = atol, gmres_rtol = rtol)
+    elseif config.method === :NaiveFilon
+        step = (c, Δt, n, stats) -> filon_solve_hardcoded(co, c, freqs, Δt, n, sv;
+            save_final_only = sfo, save_every = div(n, config.nsaves), stats, gmres_atol = atol, gmres_rtol = rtol)
+    elseif config.method === :Filon
+        step = (c, Δt, n, stats) -> efficient_filon_solve(co, c, freqs, Δt, n, sv;
+            save_final_only = sfo, save_every = div(n, config.nsaves), stats, gmres_atol = atol, gmres_rtol = rtol)
+    elseif config.method === :NaiveControlledFilon
+        co_cf = qgd_to_controlled_filon_operator(qgd_prob, controls, pcof)
+        step = (c, Δt, n, stats) -> controlled_filon_solve(co_cf, c, freqs, Δt, n, sv;
+            save_final_only = sfo, save_every = div(n, config.nsaves), stats, gmres_atol = atol, gmres_rtol = rtol)
+    elseif config.method === :ControlledFilon
+        co_cf = qgd_to_controlled_filon_operator(qgd_prob, controls, pcof)
+        step = (c, Δt, n, stats) -> efficient_controlled_filon_solve(co_cf, c, freqs, Δt, n, sv;
+            save_final_only = sfo, save_every = div(n, config.nsaves), stats, gmres_atol = atol, gmres_rtol = rtol)
     else
-        throw(ArgumentError("Invalid method '$(config.method)'. Must be " *
-            ":hermite, :filon, :controlled_filon, or :controlled_hermite."))
+        throw(ArgumentError("Invalid method '$(config.method)'.  Choose from :NaiveHermite, " *
+            ":Hermite, :NaiveFilon, :Filon, :NaiveControlledFilon, :ControlledFilon."))
     end
+    do_solve = (n) -> solve_columns((c, stats) -> step(c, config.Tmax / n, n, stats),
+                                    cols, stack_histories)
 
     # Warm up (compile) outside the timed region, then time nRuns full-length
     # repetitions and average.  The solve is deterministic, so history and the

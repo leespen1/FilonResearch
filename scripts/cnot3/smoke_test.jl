@@ -34,7 +34,8 @@ configs = NamedTuple[]
 # the default) so the l2-error / plotting path runs; the other frames below use
 # saveFinalOnly = true.
 for initialCondition in ("basis", "uniform")
-    for method in (:hermite, :filon, :controlled_filon)
+    for method in (:NaiveHermite, :Hermite, :NaiveFilon, :Filon,
+                   :NaiveControlledFilon, :ControlledFilon)
         for s in (0, 1), e in 4:6
             push!(configs, (;
                 method, frame = "rwa", s, Tmax, initialCondition, nOscLevels,
@@ -46,7 +47,7 @@ for initialCondition in ("basis", "uniform")
 end
 # The other frames, exercised on a smaller slice of the sweep (final-only).
 for frame in ("norwa", "lab")
-    for method in (:hermite, :filon, :controlled_filon), e in 4:6
+    for method in (:Hermite, :Filon, :ControlledFilon), e in 4:6
         push!(configs, (;
             method, frame, s = 0, Tmax, initialCondition = "uniform", nOscLevels,
             nGuardLevels, nsaves, saveFinalOnly = true, nRuns,

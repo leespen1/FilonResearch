@@ -45,14 +45,14 @@ const NGUARD = 2
 const TMAX = 550.0
 const NSAVES = 16
 
-const METHODS = (:filon, :controlled_filon, :controlled_hermite)   # display / legend order
-const METHOD_LABELS = Dict(:filon => "Filon", :controlled_filon => "Controlled Filon",
-                           :controlled_hermite => "Hermite")
-const METHOD_COLOR = Dict(:filon              => Makie.wong_colors()[1],   # blue
-                          :controlled_filon   => Makie.wong_colors()[2],   # orange
-                          :controlled_hermite => Makie.wong_colors()[3])   # green
-const METHOD_LS = Dict(:filon => :solid, :controlled_filon => (:dash, 1.0),
-                       :controlled_hermite => (:dashdot, 1.0))
+const METHODS = (:Filon, :ControlledFilon, :Hermite)   # display / legend order
+const METHOD_LABELS = Dict(:Filon => "Filon", :ControlledFilon => "Controlled Filon",
+                           :Hermite => "Hermite")
+const METHOD_COLOR = Dict(:Filon           => Makie.wong_colors()[1],   # blue
+                          :ControlledFilon => Makie.wong_colors()[2],   # orange
+                          :Hermite         => Makie.wong_colors()[3])   # green
+const METHOD_LS = Dict(:Filon => :solid, :ControlledFilon => (:dash, 1.0),
+                       :Hermite => (:dashdot, 1.0))
 const SVALS = (0, 1, 2)
 const ORDER_MARKERS = (:circle, :rect, :diamond)
 
