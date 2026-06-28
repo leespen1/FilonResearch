@@ -41,16 +41,20 @@ const init = get(ENV, "CNOT3_INIT", "basis")
 # and its own figure.  Override with CNOT3_FRAME ("rwa", "norwa", or "lab").
 const frame = get(ENV, "CNOT3_FRAME", "rwa")
 
-# Display order / labels / styling for the methods.
-const METHOD_ORDER  = (:hermite, :filon, :controlled_filon, :controlled_hermite)
+# Display order / labels / styling for the methods.  "Hermite" is the
+# controlled-Hermite method (the ω = 0 Filon), the FilonResearch implementation —
+# the QGD `:hermite` runs are collected but not shown here.  Colours match the
+# paper figure (cnot3_convergence_paper.jl).
+const METHOD_ORDER  = (:filon, :controlled_filon, :controlled_hermite)
 const METHOD_LABELS = Dict(
-    :hermite            => "Hermite (QGD)",
     :filon              => "Filon",
     :controlled_filon   => "Controlled-Filon",
-    :controlled_hermite => "Controlled-Hermite",
+    :controlled_hermite => "Hermite",
 )
 const SVALS         = (0, 1, 2)
-const METHOD_COLORS = Dict(m => c for (m, c) in zip(METHOD_ORDER, Makie.wong_colors()))
+const METHOD_COLORS = Dict(:filon              => Makie.wong_colors()[1],
+                           :controlled_filon   => Makie.wong_colors()[2],
+                           :controlled_hermite => Makie.wong_colors()[3])
 const ORDER_MARKERS = (:circle, :rect, :diamond)
 
 # -----------------------------------------------------------------------------
@@ -78,7 +82,7 @@ isempty(df) && error("No runs with frame=$(frame) (initialCondition=$(init)) in 
 df.method = Symbol.(df.method)
 println("initialCondition = $(init), frame = $(frame)")
 println("Loaded $(nrow(df)) runs: ",
-        join(["$(METHOD_LABELS[m])×$(count(==(m), df.method))" for m in unique(df.method)], ", "))
+        join(["$(get(METHOD_LABELS, m, m))×$(count(==(m), df.method))" for m in unique(df.method)], ", "))
 
 # Vern9 reference: an independent, high-accuracy integration of this frame's own
 # dynamics (cached; see cnot3_reference.jl).  Every run's error is measured
@@ -377,10 +381,7 @@ function make_gmres_figure(df, methods; basename = "cnot3_gmres_$(frame)_$(init)
 end
 
 methods_present = [m for m in METHOD_ORDER if m in df.method]
-# The convergence panel shows only the three primary competitors; the other
-# figures keep the full method set.
-conv_methods = [m for m in methods_present if m != :controlled_hermite]
-fig_conv = make_convergence_figure(df, conv_methods)
+fig_conv = make_convergence_figure(df, methods_present)
 fig_time = make_timing_figure(df, methods_present)
 fig_dt   = make_stepsize_figure(df, methods_present)
 fig_wp   = make_workprecision_figure(df, methods_present)
