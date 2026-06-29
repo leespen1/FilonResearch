@@ -121,18 +121,36 @@ function _eff_hermite_apply_M!(out, x, mats, Aop, Adop, ws, ::Val{S}) where {S}
         _combine_add!(ws.F2x, ws.Px, Adop.coeffs)               # + Adotx = Σ_k ċ_k A_k x  ⇒ F_2 x  (reuses Px)
     end
     @inbounds for k in eachindex(mats)
-        Gk = ws.G[k]
-        if S == 0
-            @. ws.bracket = Gk[1] * x
-        elseif S == 1
-            @. ws.bracket = Gk[1] * x + Gk[2] * ws.Ax
-        else
-            @. ws.bracket = Gk[1] * x + Gk[2] * ws.Ax + Gk[3] * ws.F2x
-        end
+        # Ω = 0 here, so F_1 x = ws.Ax.  Hermite generators are scalars (not the
+        # diagonal vectors of the Filon method), so the bracket is a scalar-weighted
+        # combination — distinct from the Filon `_bracket_kernel!`.
+        _hermite_bracket_kernel!(ws.bracket, ws.G[k], x, ws.Ax, ws.F2x, Val(S))
         mul!(ws.Akbk, mats[k], ws.bracket)
-        @. out += ws.Akbk
+        _accum_kernel!(out, ws.Akbk)
     end
     return out
+end
+
+# Scalar-generator analogue of `_bracket_kernel!`: G[m] is a scalar weight, so the
+# bracket is g·vector rather than (diagonal vector)·vector.
+@inline function _hermite_bracket_kernel!(br, G, x, F1x, F2x, ::Val{S}) where {S}
+    if S == 0
+        g1 = G[1]
+        @inbounds @simd for i in eachindex(br)
+            br[i] = g1 * x[i]
+        end
+    elseif S == 1
+        g1 = G[1]; g2 = G[2]
+        @inbounds @simd for i in eachindex(br)
+            br[i] = g1 * x[i] + g2 * F1x[i]
+        end
+    else
+        g1 = G[1]; g2 = G[2]; g3 = G[3]
+        @inbounds @simd for i in eachindex(br)
+            br[i] = g1 * x[i] + g2 * F1x[i] + g3 * F2x[i]
+        end
+    end
+    return br
 end
 
 # Callable applying x ↦ S_I x = x - M_I x, wrapped once in a LinearMap.  The

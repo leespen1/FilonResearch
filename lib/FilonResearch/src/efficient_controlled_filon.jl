@@ -195,6 +195,51 @@ function _build_generators!(G, W, ranges, ed, φ, ::Val{S}) where {S}
     return G
 end
 
+# Hand-vectorized diagonal kernels.  At the qudit problem's N (a few hundred) the
+# diagonal weight-phase work dominates the apply (the constant Hamiltonians are very
+# sparse), and a generic complex broadcast spends much of its time in broadcast
+# machinery rather than arithmetic.  A flat `@inbounds @simd` loop over the
+# (loop-invariant-hoisted) diagonal vectors is ~2.5× faster on the fused bracket,
+# which is the single hottest operation in the apply.  Each kernel computes exactly
+# the broadcast it replaces, element by element with no cross-i reassociation.
+@inline function _f1x_kernel!(F1x, Ax, freqs, x)            # F_1 x = (A - iΩ) x
+    @inbounds @simd for i in eachindex(F1x)
+        F1x[i] = Ax[i] - im * freqs[i] * x[i]
+    end
+    return F1x
+end
+@inline function _f2x_kernel!(F2x, t2, t1, freqs, x, Ax)   # F_2 x = Ȧx + A(Ax) - Ω²x - 2iΩ Ax
+    @inbounds @simd for i in eachindex(F2x)
+        F2x[i] = t2[i] + t1[i] - (freqs[i]^2) * x[i] - 2im * freqs[i] * Ax[i]
+    end
+    return F2x
+end
+@inline function _bracket_kernel!(br, G, x, F1x, F2x, ::Val{S}) where {S}
+    if S == 0
+        G1 = G[1]
+        @inbounds @simd for i in eachindex(br)
+            br[i] = G1[i] * x[i]
+        end
+    elseif S == 1
+        G1 = G[1]; G2 = G[2]
+        @inbounds @simd for i in eachindex(br)
+            br[i] = G1[i] * x[i] + G2[i] * F1x[i]
+        end
+    else
+        G1 = G[1]; G2 = G[2]; G3 = G[3]
+        @inbounds @simd for i in eachindex(br)
+            br[i] = G1[i] * x[i] + G2[i] * F1x[i] + G3[i] * F2x[i]
+        end
+    end
+    return br
+end
+@inline function _accum_kernel!(out, y)
+    @inbounds @simd for i in eachindex(out)
+        out[i] += y[i]
+    end
+    return out
+end
+
 # out ← M x = Σ_k A_k Σ_m [G_{k,m} F_m] x.  The per-step generator diagonals
 # G_{k,m} = ws.G[k][m+1] (built by `_build_generators!`) already fold the carrier ×
 # order sum, so each apply just gathers them against the F_m x vectors and applies
@@ -204,26 +249,19 @@ function _eff_apply_M!(out, x, mats, Aop, Adop, freqs, ws, ::Val{S}) where {S}
     fill!(out, zero(eltype(out)))
     if S == 1
         mul!(ws.Ax, Aop, x)
-        @. ws.F1x = ws.Ax - im * freqs * x                       # F_1 x = (A - iΩ) x
+        _f1x_kernel!(ws.F1x, ws.Ax, freqs, x)
     elseif S >= 2
         _apply_each!(ws.Px, mats, x)                             # Px[k] = A_k x  (one matvec each)
         _combine!(ws.Ax, ws.Px, Aop.coeffs)                     # Ax = Σ_k c_k A_k x
-        @. ws.F1x = ws.Ax - im * freqs * x                       # F_1 x = (A - iΩ) x
+        _f1x_kernel!(ws.F1x, ws.Ax, freqs, x)
         mul!(ws.t1, Aop, ws.Ax)                                  # A(Ax)
         _combine!(ws.t2, ws.Px, Adop.coeffs)                     # Adotx = Σ_k ċ_k A_k x  (reuses Px)
-        @. ws.F2x = ws.t2 + ws.t1 - (freqs^2) * x - 2im * freqs * ws.Ax
+        _f2x_kernel!(ws.F2x, ws.t2, ws.t1, freqs, x, ws.Ax)
     end
     @inbounds for k in eachindex(mats)
-        Gk = ws.G[k]
-        if S == 0
-            @. ws.bracket = Gk[1] * x
-        elseif S == 1
-            @. ws.bracket = Gk[1] * x + Gk[2] * ws.F1x
-        else
-            @. ws.bracket = Gk[1] * x + Gk[2] * ws.F1x + Gk[3] * ws.F2x
-        end
+        _bracket_kernel!(ws.bracket, ws.G[k], x, ws.F1x, ws.F2x, Val(S))
         mul!(ws.Akbk, mats[k], ws.bracket)
-        @. out += ws.Akbk
+        _accum_kernel!(out, ws.Akbk)
     end
     return out
 end
