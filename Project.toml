@@ -5,6 +5,7 @@ authors = ["Spencer Lee"]
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 ControlledOperators = "e1fb17ce-2642-44fa-a2d5-f5681ff53a0f"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+Debugger = "31a5f54b-26ea-5ae9-a837-f05ce5417438"
 DrWatson = "634d3b9d-ee7a-5ddf-bec9-22491ea816e1"
 FilonResearch = "3a284e70-3988-4fde-94af-e81b1d70ca0a"
 LaTeXStrings = "b964fa9f-0449-5b57-a5c2-d3ea65f4040f"
