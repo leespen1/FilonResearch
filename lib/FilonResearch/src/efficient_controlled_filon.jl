@@ -255,10 +255,16 @@ function _efficient_controlled_solve_dynamic(co, ψ0, frequencies, Δt, nsteps, 
     ws = _EffControlledDynWS(N, length(mats), S + 1)
     freqs = wp.freqs
 
-    # Flattened carrier envelopes and their per-step derivative buffer.
+    # Flattened carrier envelopes and their per-step derivative buffers.  Endpoint
+    # quantities at tₙ are identical to the previous step's t_{n+1} (same time, same
+    # values), so the envelope-derivative evaluation and operator realization run
+    # once per step instead of twice: `edL`/`edR` ping-pong the envelope-derivative
+    # buffers between steps and `AL`/`AdL` carry the left-endpoint operators, both
+    # primed below at the first step's left endpoint t = 0.
     env_tuple = _flatten_envelopes(co.controls)
     ncarrier = length(env_tuple)
-    edbuf = Vector{SVector{S + 1,ComplexF64}}(undef, ncarrier)
+    edL = Vector{SVector{S + 1,ComplexF64}}(undef, ncarrier)
+    edR = Vector{SVector{S + 1,ComplexF64}}(undef, ncarrier)
     φbuf = Vector{ComplexF64}(undef, ncarrier)
 
     ψ = Vector{ComplexF64}(undef, N); ψ .= ψ0
@@ -278,24 +284,29 @@ function _efficient_controlled_solve_dynamic(co, ψ0, frequencies, Δt, nsteps, 
     save_final_only || (history[:, 1] .= ψ)
     col = 2
 
+    # Prime the first step's left endpoint (t = 0): envelope derivatives and operators.
+    _write_env_derivs!(edL, env_tuple, zero(Δt), DerivativeUpTo{S}())
+    AL = evaluate(co, zero(Δt), Derivative{0}())
+    AdL = S >= 2 ? evaluate(co, zero(Δt), Derivative{1}()) : AL
+
     for n in 1:nsteps
         t0 = _stats_tick(stats)
-        t_n = (n - 1) * Δt; t_np1 = n * Δt; mid = t_n + Δt / 2
+        t_np1 = n * Δt; mid = (n - 1) * Δt + Δt / 2
         @. φbuf = cis(wp.ν * mid)                       # shared midpoint phase, both sides
-        # explicit side:  rhs = ψ + M_E ψ
-        AE = evaluate(co, t_n, Derivative{0}())
-        AdE = S >= 2 ? evaluate(co, t_n, Derivative{1}()) : AE
-        _write_env_derivs!(edbuf, env_tuple, t_n, DerivativeUpTo{S}())
-        _build_generators!(ws.G, wp.WE, wp.ranges, edbuf, φbuf, Val(S))
-        _eff_apply_M!(ws.Mψ, ψ, mats, AE, AdE, freqs, ws, Val(S))
+        # explicit side:  rhs = ψ + M_E ψ.  The left-endpoint envelope derivatives
+        # (edL) and operators (AL, AdL) were realized as the previous step's right
+        # endpoint; only the WE-weighted generators (which also depend on the
+        # current midpoint phase) are rebuilt here.
+        _build_generators!(ws.G, wp.WE, wp.ranges, edL, φbuf, Val(S))
+        _eff_apply_M!(ws.Mψ, ψ, mats, AL, AdL, freqs, ws, Val(S))
         @. ws.rhs = ψ + ws.Mψ
-        # implicit side:  refresh the operators at t_{n+1}, rebuild the implicit
+        # implicit side:  realize the operators at t_{n+1}, rebuild the implicit
         # generators G_I (reused across GMRES iterations), then solve
         # (I - M_I) ψ_{n+1} = rhs matrix-free.
         ia.Aop = evaluate(co, t_np1, Derivative{0}())
         ia.Adop = S >= 2 ? evaluate(co, t_np1, Derivative{1}()) : ia.Aop
-        _write_env_derivs!(edbuf, env_tuple, t_np1, DerivativeUpTo{S}())
-        _build_generators!(ws.G, wp.WI, wp.ranges, edbuf, φbuf, Val(S))
+        _write_env_derivs!(edR, env_tuple, t_np1, DerivativeUpTo{S}())
+        _build_generators!(ws.G, wp.WI, wp.ranges, edR, φbuf, Val(S))
         warm_start && Krylov.warm_start!(kws, ψ)
         Krylov.gmres!(kws, L, ws.rhs; atol = atol, rtol = rtol)
         ψ .= Krylov.solution(kws)
@@ -308,6 +319,9 @@ function _efficient_controlled_solve_dynamic(co, ψ0, frequencies, Δt, nsteps, 
             history[:, col] .= ψ
             col += 1
         end
+        # This step's right endpoint t_{n+1} is the next step's left endpoint tₙ.
+        edL, edR = edR, edL
+        AL = ia.Aop; AdL = ia.Adop
     end
     return save_final_only ? ψ : history
 end

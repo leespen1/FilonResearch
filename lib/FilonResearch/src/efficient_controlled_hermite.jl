@@ -159,9 +159,13 @@ function _efficient_controlled_hermite_solve_dynamic(co, ψ0, Δt, nsteps, ::Val
     wp = _efficient_dynamic_hermite_weights(Val(S), Δt)
     ws = _EffControlledHermiteWS(N, nmat, S + 1)
 
-    # Per-step control-derivative buffer: one SVector{S+1} per matrix (feeds the
-    # generator build; not read by the apply itself).
-    edbuf = Vector{SVector{S + 1,ComplexF64}}(undef, nmat)
+    # Per-step control-derivative buffers: one SVector{S+1} per matrix (feeds the
+    # generator build; not read by the apply itself).  The left endpoint tₙ repeats
+    # the previous step's right endpoint t_{n+1}, so `edL`/`edR` ping-pong between
+    # steps and `AL`/`AdL` carry the left-endpoint operators (primed below at t = 0),
+    # making the control evaluation run once per step instead of twice.
+    edL = Vector{SVector{S + 1,ComplexF64}}(undef, nmat)
+    edR = Vector{SVector{S + 1,ComplexF64}}(undef, nmat)
 
     ψ = Vector{ComplexF64}(undef, N); ψ .= ψ0
 
@@ -179,23 +183,27 @@ function _efficient_controlled_hermite_solve_dynamic(co, ψ0, Δt, nsteps, ::Val
     save_final_only || (history[:, 1] .= ψ)
     col = 2
 
+    # Prime the first step's left endpoint (t = 0): control derivatives and operators.
+    _write_env_derivs!(edL, co.controls, zero(Δt), DerivativeUpTo{S}())
+    AL = evaluate(co, zero(Δt), Derivative{0}())
+    AdL = S >= 2 ? evaluate(co, zero(Δt), Derivative{1}()) : AL
+
     for n in 1:nsteps
         t0 = _stats_tick(stats)
-        t_n = (n - 1) * Δt; t_np1 = n * Δt
-        # explicit side:  rhs = ψ + M_E ψ
-        AE = evaluate(co, t_n, Derivative{0}())
-        AdE = S >= 2 ? evaluate(co, t_n, Derivative{1}()) : AE
-        _write_env_derivs!(edbuf, co.controls, t_n, DerivativeUpTo{S}())
-        _build_hermite_generators!(ws.G, wp.WE, edbuf, Val(S))
-        _eff_hermite_apply_M!(ws.Mψ, ψ, mats, AE, AdE, ws, Val(S))
+        t_np1 = n * Δt
+        # explicit side:  rhs = ψ + M_E ψ.  The left-endpoint control derivatives
+        # (edL) and operators (AL, AdL) were realized as the previous step's right
+        # endpoint, so only the WE-weighted generators are rebuilt here.
+        _build_hermite_generators!(ws.G, wp.WE, edL, Val(S))
+        _eff_hermite_apply_M!(ws.Mψ, ψ, mats, AL, AdL, ws, Val(S))
         @. ws.rhs = ψ + ws.Mψ
-        # implicit side:  refresh the operators at t_{n+1}, rebuild the implicit
+        # implicit side:  realize the operators at t_{n+1}, rebuild the implicit
         # generators G_I (reused across GMRES iterations), then solve
         # (I - M_I) ψ_{n+1} = rhs matrix-free.
         ia.Aop = evaluate(co, t_np1, Derivative{0}())
         ia.Adop = S >= 2 ? evaluate(co, t_np1, Derivative{1}()) : ia.Aop
-        _write_env_derivs!(edbuf, co.controls, t_np1, DerivativeUpTo{S}())
-        _build_hermite_generators!(ws.G, wp.WI, edbuf, Val(S))
+        _write_env_derivs!(edR, co.controls, t_np1, DerivativeUpTo{S}())
+        _build_hermite_generators!(ws.G, wp.WI, edR, Val(S))
         warm_start && Krylov.warm_start!(kws, ψ)
         Krylov.gmres!(kws, L, ws.rhs; atol = atol, rtol = rtol)
         ψ .= Krylov.solution(kws)
@@ -208,6 +216,9 @@ function _efficient_controlled_hermite_solve_dynamic(co, ψ0, Δt, nsteps, ::Val
             history[:, col] .= ψ
             col += 1
         end
+        # This step's right endpoint t_{n+1} is the next step's left endpoint tₙ.
+        edL, edR = edR, edL
+        AL = ia.Aop; AdL = ia.Adop
     end
     return save_final_only ? ψ : history
 end
