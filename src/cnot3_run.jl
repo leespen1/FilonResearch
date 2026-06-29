@@ -107,8 +107,24 @@ function run_simulation(config)
     rtol = config.gmresRtol
 
     sv    = config.s
-    co    = qgd_to_controlled_operator(qgd_prob, controls, pcof)   # Hermite + Filon
+    # One carrier-grouped operator shared by every method: each control contributes
+    # its two constant matrices once, paired with a `SumControl` over that control's
+    # carriers.  This is the form Appendix B's efficient controlled-Filon method
+    # needs (carriers folded into the per-matrix generator, each matrix applied once
+    # per stage regardless of carrier count), and the Filon/Hermite methods consume
+    # exactly the same operator — they evaluate the controls via `derivative`, which
+    # folds the carriers — so the method comparison is over an identical operator.
+    co    = qgd_to_efficient_controlled_filon_operator(qgd_prob, controls, pcof)
     freqs = qgd_ansatz_frequencies(qgd_prob)
+
+    # Guard the carrier grouping: the operator must have one drift plus two matrices
+    # per control (M⁺ₖ, M⁻ₖ), not two per control *per carrier*.  A revert to the
+    # ungrouped adapter (`qgd_to_controlled_filon_operator`) would make this 1 +
+    # 2·ncontrol·Nfreq and silently restore the per-carrier matvec blowup.
+    @assert length(co) == 1 + 2 * length(controls) (
+        "expected a carrier-grouped controlled operator with $(1 + 2*length(controls)) " *
+        "matrices (one drift + M⁺/M⁻ per control); got $(length(co)).  The carriers of " *
+        "each control must be gathered under a SumControl, not split across duplicated matrices.")
 
     # Each method is a `step(c, Δt, n, stats)` advancing one column with its solver
     # and recording GMRES stats.  Each `Naive*` / non-`Naive` pair is the same
@@ -116,6 +132,9 @@ function run_simulation(config)
     # operator apply (each control matrix applied s+1 times) — a large win for the
     # ControlledFilon and Hermite families, while for plain Filon the drift is
     # diagonal so the efficient apply is not faster (both are offered regardless).
+    # `:NaiveControlledFilon` is the lone exception that does *not* use the shared
+    # `co`: its solver loops over controls directly without reaching into a
+    # SumControl, so it needs the per-carrier-split operator built below.
     # Wrapping the solver in one closure makes the warm-up and the timed solve use
     # the identical keyword call site, so compilation stays out of the timed region.
     if config.method === :NaiveHermite
@@ -131,12 +150,13 @@ function run_simulation(config)
         step = (c, Δt, n, stats) -> efficient_filon_solve(co, c, freqs, Δt, n, sv;
             save_final_only = sfo, save_every = div(n, config.nsaves), stats, gmres_atol = atol, gmres_rtol = rtol)
     elseif config.method === :NaiveControlledFilon
+        # The naive solver loops over controls directly, so each carrier must be its
+        # own bare CarrierControl: build the per-carrier-split operator here.
         co_cf = qgd_to_controlled_filon_operator(qgd_prob, controls, pcof)
         step = (c, Δt, n, stats) -> controlled_filon_solve(co_cf, c, freqs, Δt, n, sv;
             save_final_only = sfo, save_every = div(n, config.nsaves), stats, gmres_atol = atol, gmres_rtol = rtol)
     elseif config.method === :ControlledFilon
-        co_cf = qgd_to_controlled_filon_operator(qgd_prob, controls, pcof)
-        step = (c, Δt, n, stats) -> efficient_controlled_filon_solve(co_cf, c, freqs, Δt, n, sv;
+        step = (c, Δt, n, stats) -> efficient_controlled_filon_solve(co, c, freqs, Δt, n, sv;
             save_final_only = sfo, save_every = div(n, config.nsaves), stats, gmres_atol = atol, gmres_rtol = rtol)
     else
         throw(ArgumentError("Invalid method '$(config.method)'.  Choose from :NaiveHermite, " *

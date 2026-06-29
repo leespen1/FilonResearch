@@ -25,8 +25,24 @@ println("System size N = ", N)
 
 co_filon  = qgd_to_controlled_operator(qgd_prob, controls, pcof)
 co_cfilon = qgd_to_controlled_filon_operator(qgd_prob, controls, pcof)
-println("Filon operator:            ", co_filon)
-println("Controlled-Filon operator: ", co_cfilon)
+co_eff    = qgd_to_efficient_controlled_filon_operator(qgd_prob, controls, pcof)
+println("Filon operator:                      ", co_filon)
+println("Controlled-Filon operator (split):   ", co_cfilon)
+println("Controlled-Filon operator (grouped): ", co_eff)
+
+# --- structural contract of the two controlled-Filon adapters -----------------
+# The grouped adapter (fed to efficient_controlled_filon_solve) gathers each
+# control's carriers under one SumControl, so it has one drift + M⁺/M⁻ per control.
+# The split adapter (fed to the naive controlled_filon_solve) keeps every carrier
+# as its own bare CarrierControl, so it has two matrices per control *per carrier*.
+ncontrol = length(controls)
+Nfreq = length(first(controls).carrier_frequencies)
+@assert length(co_eff) == 1 + 2 * ncontrol
+@assert length(co_cfilon) == 1 + 2 * ncontrol * Nfreq
+@assert all(c isa FilonResearch.SumControl for c in co_eff.controls[2:end])
+@assert all(length(FilonResearch.components(c)) == Nfreq for c in co_eff.controls[2:end])
+println("PASS: grouped adapter has $(length(co_eff)) matrices (1 + 2·ncontrol), each ",
+        "control a SumControl over $Nfreq carriers; split adapter has $(length(co_cfilon)).")
 
 # --- A(t) equivalence at random times, derivative orders 0,1,2 ---------------
 println("\nA(t) equivalence check (max abs difference):")
