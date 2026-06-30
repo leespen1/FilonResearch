@@ -13,8 +13,13 @@ variant reorganizing the operator apply (each control matrix applied s+1 times):
   * `:ControlledFilon` / `:NaiveControlledFilon` — controlled Filon, carriers
     factored out (`efficient_controlled_filon_solve` / `controlled_filon_solve`).
 
-The default sweep collects the three efficient variants; the `Naive*` ones are
-available via `--method` for naive-vs-efficient timing comparisons.
+A seventh method, `:HermiteQGD`, propagates with QuantumGateDesign's own
+`eval_forward` Hermite solver at order 2(s+1); it is a baseline the hand-rolled
+`:Hermite` is compared against.
+
+The default sweep collects the three efficient variants plus `:HermiteQGD`; the
+`Naive*` ones are available via `--method` for naive-vs-efficient timing
+comparisons.
 
 Each run is cached individually via DrWatson's `produce_or_load`, so re-running
 only computes missing results.  Each result file records the git commit it was
@@ -32,7 +37,10 @@ With no arguments the full default sweep below runs.  Optional flags narrow the
 sweep so a single job — local or on SLURM — can target a batch:
 
   * `--method Filon,Hermite`   one or more of `NaiveHermite|Hermite|NaiveFilon|
-                               Filon|NaiveControlledFilon|ControlledFilon`
+                               Filon|NaiveControlledFilon|ControlledFilon|
+                               HermiteQGD` (the last propagates with
+                               QuantumGateDesign's own `eval_forward` Hermite
+                               solver, as a baseline for `Hermite`)
   * `--s 0,1`                  order parameter(s) s   (order = 2(s+1))
   * `--nsteps 128,256,512`     explicit step counts (overrides the 2^e defaults)
   * `--init basis,uniform`     initial condition(s): `basis` (default, full
@@ -82,8 +90,8 @@ initialCondition = "basis"
 # The six solvers (three naive/efficient pairs); the default sweep uses the three
 # efficient ones, with the naive variants opt-in via --method.
 all_methods     = (:NaiveHermite, :Hermite, :NaiveFilon, :Filon,
-                   :NaiveControlledFilon, :ControlledFilon)
-default_methods = (:Hermite, :Filon, :ControlledFilon)
+                   :NaiveControlledFilon, :ControlledFilon, :HermiteQGD)
+default_methods = (:Hermite, :Filon, :ControlledFilon, :HermiteQGD)
 all_frames = ("rwa", "norwa", "lab")
 
 s_values = (0, 1, 2)                       # order = 2(s+1) ∈ {2,4,6}

@@ -1,6 +1,6 @@
 """
 Simulation driver for the CNOT3 convergence experiment: builds the problem,
-operators, and runs one of the three integrators for a single config.  Shared by
+operators, and runs one of its integrators for a single config.  Shared by
 the data-collection script and the smoke test.
 
 Assumes `FilonResearch`, `QuantumGateDesign`, and `LinearAlgebra.norm` are in
@@ -158,9 +158,20 @@ function run_simulation(config)
     elseif config.method === :ControlledFilon
         step = (c, Δt, n, stats) -> efficient_controlled_filon_solve(co, c, freqs, Δt, n, sv;
             save_final_only = sfo, save_every = div(n, config.nsaves), stats, gmres_atol = atol, gmres_rtol = rtol)
+    elseif config.method === :HermiteQGD
+        # QuantumGateDesign's own Hermite time-stepper at order 2(s+1) — a baseline
+        # the hand-rolled :Hermite method is compared against.  QGD steps internally
+        # (no FilonResearch per-step GMRES stats, so `stats` stays empty), and its
+        # GMRES tolerance is the one baked into `qgd_prob` rather than `atol`/`rtol`.
+        order = 2 * (sv + 1)
+        step = (c, Δt, n, stats) -> begin
+            h = eval_forward_complex_history(qgd_prob, controls, pcof, c;
+                order, nsteps = n, saveEveryNsteps = div(n, config.nsaves))
+            sfo ? h[:, end:end] : h
+        end
     else
         throw(ArgumentError("Invalid method '$(config.method)'.  Choose from :NaiveHermite, " *
-            ":Hermite, :NaiveFilon, :Filon, :NaiveControlledFilon, :ControlledFilon."))
+            ":Hermite, :NaiveFilon, :Filon, :NaiveControlledFilon, :ControlledFilon, :HermiteQGD."))
     end
     do_solve = (n) -> solve_columns((c, stats) -> step(c, config.Tmax / n, n, stats),
                                     cols, stack_histories)
