@@ -16,6 +16,9 @@
 # compared like-for-like.  Errors are measured against the cached Vern9 reference
 # for each (frame, initialCondition) — precompute with cnot3_collect_reference.jl.
 #
+# The companion speedup/Δt tables are produced by cnot3_tables_paper.jl, which
+# shares src/cnot3_paper_common.jl but does not load Makie.
+#
 # Figures are written to the DrWatson plots dir, and (only if the Overleaf dir
 # exists) copied into FilonProjectOverleaf: PDFs to Figures/, PNGs to FiguresPNG/.
 #
@@ -26,25 +29,11 @@
 using DrWatson
 @quickactivate "FilonExperiments"
 
-using DataFrames
-using LinearAlgebra
 using CairoMakie
 
-# Lightweight: reads jld2 only (no ODE solver); references must already exist.
-include(srcdir("error_analysis.jl"))   # load_vern9_reference
+include(srcdir("cnot3_paper_common.jl"))   # constants, run loading, frame_df, ...
 
 CairoMakie.set_theme!(CairoMakie.theme_latexfonts())
-
-const prefix   = get(ENV, "CNOT3_PREFIX", "cnot3Convergence")
-const datapath = datadir(prefix)
-# Both initial conditions by default; CNOT3_INIT restricts to one.
-const INITS = haskey(ENV, "CNOT3_INIT") ? [ENV["CNOT3_INIT"]] : ["basis", "uniform"]
-
-# Problem size (must match the collected sweep).
-const NOSC = 10
-const NGUARD = 2
-const TMAX = 550.0
-const NSAVES = 16
 
 const METHODS = (:Filon, :ControlledFilon, :Hermite)   # display / legend order
 const METHOD_LABELS = Dict(:Filon => "Filon", :ControlledFilon => "Controlled Filon",
@@ -54,39 +43,15 @@ const METHOD_COLOR = Dict(:Filon           => Makie.wong_colors()[1],   # blue
                           :Hermite         => Makie.wong_colors()[3])   # green
 const METHOD_LS = Dict(:Filon => :solid, :ControlledFilon => (:dash, 1.0),
                        :Hermite => (:dashdot, 1.0))
-const SVALS = (0, 1, 2)
 const ORDER_MARKERS = (:circle, :rect, :diamond)
-
-# Drop diverged coarse runs (upper) and the round-off floor (lower) before plotting.
-const ERROR_WINDOW = (1e-13, 1e1)
 
 # Paper sizing: SIAM single column \linewidth = 5.125 in, 1 pt = 1/72 in.
 const PAPER_PT_PER_IN = 72
 const PAPER_WIDTH_IN  = 5.125
 
-# The method/order legend is omitted by default — it duplicates the legend already
-# shown on the Rabi convergence figure.  Set CNOT3_LEGEND=1 to include it.
-const SHOW_LEGEND = get(ENV, "CNOT3_LEGEND", "0") ∈ ("1", "true", "yes")
-
-ic_label(ic) = ic == "basis" ? "Gate Basis IC" :
-               ic == "uniform" ? "Uniform IC" : "$(ic) IC"
-
-uref_of(frame, init) = load_vern9_reference(; frame, initialCondition = init, Nosc = NOSC,
-                                            Nguard = NGUARD, Tmax = TMAX, nsaves = NSAVES)["uref"]
-
-# Per-(frame, init) DataFrame with the derived columns the figures need.
-function frame_df(df_all, frame, init)
-    mask = isequal.(df_all.initialCondition, init) .& isequal.(df_all.frame, frame)
-    df = copy(df_all[mask, :])
-    isempty(df) && error("No runs for frame=$frame, init=$init in $datapath")
-    uref = uref_of(frame, init)
-    df.dt = TMAX ./ df.nsteps
-    df.final_error = [norm(h[:, end] .- uref) for h in df.history]
-    return df
-end
-
-# Rows for one (method, s), sorted by increasing nsteps.
-seriesof(df, m, s) = sort(df[(df.method .== m) .& (df.s .== s), :], :nsteps)
+# The method/order legend is included by default; set CNOT3_LEGEND=0 to omit it
+# (e.g. when the Rabi convergence figure's identical legend is already in view).
+const SHOW_LEGEND = get(ENV, "CNOT3_LEGEND", "1") ∈ ("1", "true", "yes")
 
 # Logarithmic minor ticks (2..9 × 10^k) over a generous exponent range; Makie
 # clips them to each axis's visible window.
@@ -243,7 +208,6 @@ end
 
 const FIREBRICK_LEGEND = ([LineElement(color = :firebrick, linestyle = :dot, linewidth = 2)],
                           ["RWA Error"], "Modeling")
-in_window(e) = (e .>= ERROR_WINDOW[1]) .& (e .<= ERROR_WINDOW[2])
 
 # -----------------------------------------------------------------------------
 # The three figures for one initial condition.
@@ -319,9 +283,7 @@ function figures_for(df_all, init)
         basename = "cnot3_gmres_labrwa_$(init)")
 end
 
-println("Reading ", datapath)
-df_all = collect_results(datapath)
-df_all.method = Symbol.(df_all.method)
+df_all = load_cnot3_runs()
 for init in INITS
     figures_for(df_all, init)
 end
