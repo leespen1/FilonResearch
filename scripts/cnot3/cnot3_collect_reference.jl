@@ -9,6 +9,9 @@ instead of computing the (slow, lab-frame) reference on the fly.
 Each `(frame, initialCondition)` reference is cached via DrWatson's
 `produce_or_load`, so re-running only computes the missing ones.
 
+After collecting, prints the CNOT gate fidelity/infidelity of each selected
+frame's "basis" reference (a cheap post-processing of the cached final state).
+
 Optional flags narrow the set (default: all frames × both initial conditions):
   * `--frame rwa,norwa,lab`
   * `--init  basis,uniform`
@@ -74,6 +77,7 @@ end
 @everywhere using FilonResearch
 @everywhere using QuantumGateDesign
 @everywhere using LinearAlgebra: norm
+using Printf
 @everywhere include(srcdir("cnot3_run.jl"))        # problem builders, make_initial_condition
 @everywhere include(srcdir("cnot3_reference.jl"))  # vern9_reference
 
@@ -103,6 +107,21 @@ if !all(results)
     @warn "Not all references succeeded!"
     for i in findall(!, results)
         println("\t", configs[i])
+    end
+end
+
+# ============================================================
+# CNOT gate fidelity of each frame's "basis" reference
+# ============================================================
+if "basis" in selected_inits
+    println("\nCNOT gate fidelity vs Vern9 basis reference (F = |tr(target† U)|²/N_ess²):")
+    for frame in selected_frames
+        data = vern9_reference(; frame, initialCondition = "basis",
+            Nosc = NOSC, Nguard = NGUARD, Tmax = TMAX, nsaves = NSAVES,
+            abstol = ABSTOL, reltol = RELTOL)          # cache hit: loads the jld2
+        F = cnot3_gate_fidelity(data["uref"]; frame,
+            Nosc = NOSC, Nguard = NGUARD, Tmax = TMAX)
+        @printf "  frame=%-6s  fidelity=%.12f  infidelity=%.6e\n" frame F (1 - F)
     end
 end
 flush(stdout)

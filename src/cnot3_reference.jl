@@ -16,7 +16,7 @@ Assumes `cnot3_run.jl` is already `include`d (for `cnot3_hoho_qgd_prob`,
 
 using DrWatson
 using OrdinaryDiffEqVerner
-using LinearAlgebra: mul!, norm
+using LinearAlgebra: diag, dot, mul!, norm
 
 # Integrate dψ/dt = A(t)ψ with Vern9, one column per initial state, saving on the
 # shared `range(0, Tmax, nsaves+1)` grid.  Columns are stacked vertically to match
@@ -83,6 +83,44 @@ function vern9_reference(; frame, initialCondition, Nosc, Nguard, Tmax, nsaves,
         Dict("href" => href, "uref" => href[:, end])
     end
     return data
+end
+
+"""
+    cnot3_gate_target(frame; Nosc, Nguard, Tmax)
+
+CNOT target unitary embedded in the full Hilbert space (`N_tot × N_ess` columns),
+expressed in the given `frame`.  In the lab frame the target is `U0 * CNOT` on
+the essential basis columns (Juqbox convention); rotating frames (`rwa`/`norwa`)
+see it through the diagonal rotation ψ_rot = e^{iWT} ψ_lab with W = Σₖ ωₖ nₖ,
+the transform verified numerically in `scripts/cnot3/verify_frames.jl`.
+"""
+function cnot3_gate_target(frame; Nosc, Nguard, Tmax)
+    fr = Symbol(frame)
+    prob_lab = cnot3_hoho_qgd_prob(N_osc_levels = Nosc, N_guard_levels = Nguard,
+                                   Tmax = Tmax, frame = :lab)
+    U0 = complex.(prob_lab.u0, prob_lab.v0)
+    target = U0 * CNOT_gate()
+    fr === :lab && return target
+    prob_rot = cnot3_hoho_qgd_prob(N_osc_levels = Nosc, N_guard_levels = Nguard,
+                                   Tmax = Tmax, frame = fr)
+    W = diag(Matrix(prob_lab.system_sym)) .- diag(Matrix(prob_rot.system_sym))
+    return exp.(im .* W .* Tmax) .* target
+end
+
+"""
+    cnot3_gate_fidelity(uref; frame, Nosc, Nguard, Tmax)
+
+Trace-overlap gate fidelity `F = |tr(target† U)|² / N_ess²` of a stacked "basis"
+final state (`reduce(vcat, columns)` layout, e.g. `vern9_reference(...)["uref"]`)
+against the CNOT target in the given `frame`.  The target columns are supported
+only on essential rows, so the overlap implicitly projects onto the essential
+subspace; leakage into guard levels lowers the fidelity.
+"""
+function cnot3_gate_fidelity(uref; frame, Nosc, Nguard, Tmax)
+    target = cnot3_gate_target(frame; Nosc, Nguard, Tmax)
+    N_ess = size(target, 2)
+    SV = reshape(uref, :, N_ess)
+    return abs2(dot(target, SV)) / N_ess^2
 end
 
 # Note: the lightweight loader `load_vern9_reference` and `reference_errors` live
