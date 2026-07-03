@@ -173,9 +173,9 @@ function make_figure(; basename = "cnot3_controls_solution")
 
     W = PAPER_WIDTH_IN * PAPER_PT_PER_IN
     # Extra right padding so the rightmost x-tick label (e.g. "100") is not clipped.
-    fig = Figure(size = (W, 360), fontsize = 8, figure_padding = (3, 8, 2, 2))
+    fig = Figure(size = (W, 324), fontsize = 8, figure_padding = (3, 8, 2, 2))
     ic = L"|%$(INIT_SBA[1])%$(INIT_SBA[2])%$(INIT_SBA[3])\rangle"
-    Label(fig[1, 1:2], L"\textrm{Time\;Evolution\;Under\;CNOT\;Pulse},\;|\psi_0\rangle = %$ic";
+    Label(fig[1, 1:2], L"\textbf{Time\;Evolution\;Under\;CNOT\;Pulse},\;|\psi_0\rangle = %$ic";
           fontsize = 10, font = :bold, tellwidth = false)
 
     # 2×2 layout: columns = lab (narrow zoom [TSTART, LAB_TSTOP]) vs rotating frame
@@ -242,11 +242,20 @@ function make_figure(; basename = "cnot3_controls_solution")
     rowgap!(fig.layout, 4)
     rowgap!(fig.layout, 2, 12)   # extra space so amplitude x-ticks clear the legend
 
-    mkpath(plotsdir("cnot3"))
+    # Save to the DrWatson plots dir, and (only if the Overleaf dir exists) copy
+    # PDFs to Figures/ and PNGs to FiguresPNG/.
+    overleaf = projectdir("FilonProjectOverleaf")
+    overleaf_subdir = Dict("pdf" => "Figures", "png" => "FiguresPNG")
     for (ext, kw) in (("pdf", (; pt_per_unit = 1)), ("png", (; px_per_unit = 3)))
-        save(plotsdir("cnot3", "$(basename).$(ext)"), fig; kw...)
+        fname = "$(basename).$(ext)"
+        dests = [plotsdir("cnot3", fname)]
+        isdir(overleaf) && push!(dests, joinpath(overleaf, overleaf_subdir[ext], fname))
+        for p in dests
+            mkpath(dirname(p))
+            save(p, fig; kw...)
+            println("  saved → ", p)
+        end
     end
-    println("  saved → ", plotsdir("cnot3", "$(basename).{pdf,png}"))
     return fig, states, meanpop
 end
 
