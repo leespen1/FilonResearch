@@ -68,12 +68,16 @@ end
 
 # Method/order legend (+ optional extra group); concrete Vectors, never Vector{Any}
 # (a Vector{Any} trips a Makie/ComputePipeline text-rendering bug at save time).
-function method_order_legend(legend_extra)
+function method_order_legend(legend_extra; order_asymptotic = true)
     method_entries = [LineElement(color = METHOD_COLOR[m], linestyle = METHOD_LS[m], linewidth = 2)
                       for m in METHODS]
     order_entries  = [MarkerElement(marker = ORDER_MARKERS[si], color = :black, markersize = 8)
                       for si in 1:length(SVALS)]
-    order_labels = [L"s=%$(s)\;(\mathcal{O}(\Delta t^{%$(2(s+1))}))" for s in SVALS]
+    # The GMRES iteration count is not asymptotic in Δt, so its legend drops the
+    # O(Δtᵖ) tag and shows the bare s value.
+    order_labels = order_asymptotic ?
+        [L"s=%$(s)\;(\mathcal{O}(\Delta t^{%$(2(s+1))}))" for s in SVALS] :
+        [L"s=%$(s)" for s in SVALS]
     method_labs = [METHOD_LABELS[m] for m in METHODS]
     legend_extra === nothing &&
         return ([method_entries, order_entries], [method_labs, order_labels], ["Method", "Order"])
@@ -107,7 +111,8 @@ function paper_2panel(df_lab, df_rwa, draw_panel!; title, xlabel, ylabel,
                       xlims = (nothing, nothing),
                       ylims = (nothing, nothing), ylims_rwa = nothing,
                       link_yaxis = true, yminor = false,
-                      legend = true, legend_extra = nothing, basename)
+                      legend = true, legend_extra = nothing,
+                      order_asymptotic = true, basename)
     W = PAPER_WIDTH_IN * PAPER_PT_PER_IN
     fig = Figure(size = (W, legend ? 216 : 178), fontsize = 8, figure_padding = (2, 3, 2, 2))
     Label(fig[1, 1:2], title; fontsize = 10, font = :bold)
@@ -128,7 +133,7 @@ function paper_2panel(df_lab, df_rwa, draw_panel!; title, xlabel, ylabel,
     link_yaxis ? linkaxes!(ax_lab, ax_rwa) : linkxaxes!(ax_lab, ax_rwa)
 
     if legend
-        groups, labs, titls = method_order_legend(legend_extra)
+        groups, labs, titls = method_order_legend(legend_extra; order_asymptotic)
         Legend(fig[3, 1:2], groups, labs, titls;
                orientation = :horizontal, framevisible = true, titleposition = :left,
                nbanks = 3, patchsize = (14f0, 8f0), colgap = 5, titlegap = 4,
@@ -280,6 +285,7 @@ function figures_for(df_all, init)
     paper_2panel(df_lab, df_rwa, gm!;
         title = "CNOT GMRES Iterations ($icl)", xlabel = L"\Delta t",
         ylabel = "Mean GMRES Iterations / Step", legend = SHOW_LEGEND,
+        order_asymptotic = false,
         basename = "cnot3_gmres_labrwa_$(init)")
 end
 
