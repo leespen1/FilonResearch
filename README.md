@@ -105,12 +105,46 @@ missing.
    julia --project=. scripts/cnot3/cnot3_convergence_collect_data.jl
    ```
 
-   Flags (`--method`, `--frame`, and others documented in the script header)
-   select subsets. The full sweep in the paper, which extends to 2^30
-   timesteps in the lab frame, was collected on a SLURM cluster; the
-   `scripts/cnot3/submit_*.sh` and `*.sb` files are the exact campaign
-   scripts used. A workstation can reproduce the moderate-step portion of
-   the sweep directly. Results are cached in `data/cnot3Convergence/`.
+   Flags (`--method`, `--frame`, `--s`, `--nsteps`, and others documented
+   in the script header) select subsets. Results are cached in
+   `data/cnot3Convergence/`.
+
+   This script and `cnot3_collect_reference.jl` distribute *runs* across
+   workers: launched inside a Slurm allocation, they add one worker per
+   Slurm task (via `SlurmClusterManager`) and `pmap` the run configurations
+   over them. Individual runs are serial — there is no intra-run
+   parallelism — so wide allocations of single-CPU tasks (~8 GB each) are
+   the right shape. Outside Slurm, everything runs serially in one process.
+
+   The paper's sweep uses `Tmax = 550`, `nsaves = 16`, GMRES tolerances
+   `1e-15`, frames `rwa` and `lab` (`norwa` is supported but not part of
+   the final data), both initial conditions, and consecutive power-of-two
+   step counts. The collected ranges, as exponents e in `nsteps = 2^e`
+   (where `basis` / `uniform` differ, both are given):
+
+   | frame | s | ControlledFilon | Filon | Hermite | HermiteQGD |
+   |---|---|---|---|---|---|
+   | rwa | 0 | 8–21 / 8–23 | 8–23 | 8–23 / 8–26 | 8–23 / 8–26 |
+   | rwa | 1 | 8–18 | 8–18 | 8–18 / 8–20 | 8–18 / 8–20 |
+   | rwa | 2 | 8–18 | 8–18 | 8–18 | 8–18 |
+   | lab | 0 | 10–25 / 10–26 | 10–28 | 16–27 / 16–28 | 16–27 / 16–28 |
+   | lab | 1 | 10–21 | 10–21 | 14–27 / 14–29 | 14–26 / 14–29 |
+   | lab | 2 | 10–18 | 10–18 | 14–22 / 14–23 | 14–22 / 14–23 |
+
+   To collect a specific slice, pass explicit step counts. For example, the
+   lab-frame `ControlledFilon` `s = 1` runs:
+
+   ```bash
+   julia --project=. scripts/cnot3/cnot3_convergence_collect_data.jl \
+     --frame lab --method ControlledFilon --s 1 \
+     --nsteps $(julia -e 'println(join(2 .^ (10:21), ","))')
+   ```
+
+   Because runs are cached by their full configuration, sweeps compose:
+   repeating a command (or running a superset) computes only what is
+   missing. The deepest step counts dominate the cost; the lab-frame
+   Hermite runs at 2^29 steps are multi-hour cluster jobs, while a
+   workstation can reproduce the moderate-step portion directly.
 
 3. **Figures and tables** (fast; read cached data only):
 
