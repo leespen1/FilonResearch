@@ -18,7 +18,7 @@ StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [sources]
-BSplines_jll = {rev = "main", url = "https://github.com/leespen1/BSplines_jll.jl.git"}
+BSplines_jll = {rev = "8db1c73cdb660a5ab07f04412e8a64d063f8b8f7", url = "https://github.com/leespen1/BSplines_jll.jl.git"}
 ControlledOperators = {path = "../ControlledOperators"}
 
 [compat]
