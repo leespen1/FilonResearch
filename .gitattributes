@@ -219,3 +219,8 @@ bin/	binary
 *.R text
       
 
+
+### Exclude agent-instruction files from archives (Zenodo/release snapshots)
+AGENTS.md export-ignore
+CLAUDE.md export-ignore
+.gitattributes export-ignore
