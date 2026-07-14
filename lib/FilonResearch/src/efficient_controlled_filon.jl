@@ -133,7 +133,6 @@ struct _EffControlledDynWS{V<:AbstractVector,P,GT}
     F1x::V
     F2x::V
     t1::V
-    t2::V
     bracket::V
     Akbk::V
     Mψ::V
@@ -142,7 +141,7 @@ struct _EffControlledDynWS{V<:AbstractVector,P,GT}
     G::GT       # G[k][m+1]: per-step generator diagonal (matrix k, order m), reused across GMRES iters
 end
 function _EffControlledDynWS(N::Integer, nmat::Integer, nord::Integer)
-    return _EffControlledDynWS(ntuple(_ -> zeros(ComplexF64, N), Val(9))...,
+    return _EffControlledDynWS(ntuple(_ -> zeros(ComplexF64, N), Val(8))...,
                                [zeros(ComplexF64, N) for _ in 1:nmat],
                                [[zeros(ComplexF64, N) for _ in 1:nord] for _ in 1:nmat])
 end
@@ -208,9 +207,9 @@ end
     end
     return F1x
 end
-@inline function _f2x_kernel!(F2x, t2, t1, freqs, x, Ax)   # F_2 x = Ȧx + A(Ax) - Ω²x - 2iΩ Ax
+@inline function _f2x_kernel!(F2x, ψ2, freqs, x, Ax)       # F_2 x = ψ⁽²⁾ - Ω²x - 2iΩ Ax,  ψ⁽²⁾ = Ȧx + A(Ax)
     @inbounds @simd for i in eachindex(F2x)
-        F2x[i] = t2[i] + t1[i] - (freqs[i]^2) * x[i] - 2im * freqs[i] * Ax[i]
+        F2x[i] = ψ2[i] - (freqs[i]^2) * x[i] - 2im * freqs[i] * Ax[i]
     end
     return F2x
 end
@@ -255,8 +254,8 @@ function _eff_apply_M!(out, x, mats, Aop, Adop, freqs, ws, ::Val{S}) where {S}
         _combine!(ws.Ax, ws.Px, Aop.coeffs)                     # Ax = Σ_k c_k A_k x
         _f1x_kernel!(ws.F1x, ws.Ax, freqs, x)
         mul!(ws.t1, Aop, ws.Ax)                                  # A(Ax)
-        _combine!(ws.t2, ws.Px, Adop.coeffs)                     # Adotx = Σ_k ċ_k A_k x  (reuses Px)
-        _f2x_kernel!(ws.F2x, ws.t2, ws.t1, freqs, x, ws.Ax)
+        _combine_add!(ws.t1, ws.Px, Adop.coeffs)                 # + Adotx = Σ_k ċ_k A_k x  ⇒ ψ⁽²⁾  (reuses Px)
+        _f2x_kernel!(ws.F2x, ws.t1, freqs, x, ws.Ax)
     end
     @inbounds for k in eachindex(mats)
         _bracket_kernel!(ws.bracket, ws.G[k], x, ws.F1x, ws.F2x, Val(S))
