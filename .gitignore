@@ -11,6 +11,10 @@ Manifest.toml
 # Overleaf working copy of the math write-up
 FilonProjectOverleaf/
 
+# Core dumps (e.g. from a crashed Julia worker)
+core
+core.*
+
 ################################################################################
 #                          DrWatson Project Structure                          #
 ################################################################################

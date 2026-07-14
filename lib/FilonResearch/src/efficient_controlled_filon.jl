@@ -133,7 +133,6 @@ struct _EffControlledDynWS{V<:AbstractVector,P,GT}
     F1x::V
     F2x::V
     t1::V
-    t2::V
     bracket::V
     Akbk::V
     Mψ::V
@@ -142,7 +141,7 @@ struct _EffControlledDynWS{V<:AbstractVector,P,GT}
     G::GT       # G[k][m+1]: per-step generator diagonal (matrix k, order m), reused across GMRES iters
 end
 function _EffControlledDynWS(N::Integer, nmat::Integer, nord::Integer)
-    return _EffControlledDynWS(ntuple(_ -> zeros(ComplexF64, N), Val(9))...,
+    return _EffControlledDynWS(ntuple(_ -> zeros(ComplexF64, N), Val(8))...,
                                [zeros(ComplexF64, N) for _ in 1:nmat],
                                [[zeros(ComplexF64, N) for _ in 1:nord] for _ in 1:nmat])
 end
@@ -195,6 +194,51 @@ function _build_generators!(G, W, ranges, ed, φ, ::Val{S}) where {S}
     return G
 end
 
+# Hand-vectorized diagonal kernels.  At the qudit problem's N (a few hundred) the
+# diagonal weight-phase work dominates the apply (the constant Hamiltonians are very
+# sparse), and a generic complex broadcast spends much of its time in broadcast
+# machinery rather than arithmetic.  A flat `@inbounds @simd` loop over the
+# (loop-invariant-hoisted) diagonal vectors is ~2.5× faster on the fused bracket,
+# which is the single hottest operation in the apply.  Each kernel computes exactly
+# the broadcast it replaces, element by element with no cross-i reassociation.
+@inline function _f1x_kernel!(F1x, Ax, freqs, x)            # F_1 x = (A - iΩ) x
+    @inbounds @simd for i in eachindex(F1x)
+        F1x[i] = Ax[i] - im * freqs[i] * x[i]
+    end
+    return F1x
+end
+@inline function _f2x_kernel!(F2x, ψ2, freqs, x, Ax)       # F_2 x = ψ⁽²⁾ - Ω²x - 2iΩ Ax,  ψ⁽²⁾ = Ȧx + A(Ax)
+    @inbounds @simd for i in eachindex(F2x)
+        F2x[i] = ψ2[i] - (freqs[i]^2) * x[i] - 2im * freqs[i] * Ax[i]
+    end
+    return F2x
+end
+@inline function _bracket_kernel!(br, G, x, F1x, F2x, ::Val{S}) where {S}
+    if S == 0
+        G1 = G[1]
+        @inbounds @simd for i in eachindex(br)
+            br[i] = G1[i] * x[i]
+        end
+    elseif S == 1
+        G1 = G[1]; G2 = G[2]
+        @inbounds @simd for i in eachindex(br)
+            br[i] = G1[i] * x[i] + G2[i] * F1x[i]
+        end
+    else
+        G1 = G[1]; G2 = G[2]; G3 = G[3]
+        @inbounds @simd for i in eachindex(br)
+            br[i] = G1[i] * x[i] + G2[i] * F1x[i] + G3[i] * F2x[i]
+        end
+    end
+    return br
+end
+@inline function _accum_kernel!(out, y)
+    @inbounds @simd for i in eachindex(out)
+        out[i] += y[i]
+    end
+    return out
+end
+
 # out ← M x = Σ_k A_k Σ_m [G_{k,m} F_m] x.  The per-step generator diagonals
 # G_{k,m} = ws.G[k][m+1] (built by `_build_generators!`) already fold the carrier ×
 # order sum, so each apply just gathers them against the F_m x vectors and applies
@@ -204,26 +248,19 @@ function _eff_apply_M!(out, x, mats, Aop, Adop, freqs, ws, ::Val{S}) where {S}
     fill!(out, zero(eltype(out)))
     if S == 1
         mul!(ws.Ax, Aop, x)
-        @. ws.F1x = ws.Ax - im * freqs * x                       # F_1 x = (A - iΩ) x
+        _f1x_kernel!(ws.F1x, ws.Ax, freqs, x)
     elseif S >= 2
         _apply_each!(ws.Px, mats, x)                             # Px[k] = A_k x  (one matvec each)
         _combine!(ws.Ax, ws.Px, Aop.coeffs)                     # Ax = Σ_k c_k A_k x
-        @. ws.F1x = ws.Ax - im * freqs * x                       # F_1 x = (A - iΩ) x
+        _f1x_kernel!(ws.F1x, ws.Ax, freqs, x)
         mul!(ws.t1, Aop, ws.Ax)                                  # A(Ax)
-        _combine!(ws.t2, ws.Px, Adop.coeffs)                     # Adotx = Σ_k ċ_k A_k x  (reuses Px)
-        @. ws.F2x = ws.t2 + ws.t1 - (freqs^2) * x - 2im * freqs * ws.Ax
+        _combine_add!(ws.t1, ws.Px, Adop.coeffs)                 # + Adotx = Σ_k ċ_k A_k x  ⇒ ψ⁽²⁾  (reuses Px)
+        _f2x_kernel!(ws.F2x, ws.t1, freqs, x, ws.Ax)
     end
     @inbounds for k in eachindex(mats)
-        Gk = ws.G[k]
-        if S == 0
-            @. ws.bracket = Gk[1] * x
-        elseif S == 1
-            @. ws.bracket = Gk[1] * x + Gk[2] * ws.F1x
-        else
-            @. ws.bracket = Gk[1] * x + Gk[2] * ws.F1x + Gk[3] * ws.F2x
-        end
+        _bracket_kernel!(ws.bracket, ws.G[k], x, ws.F1x, ws.F2x, Val(S))
         mul!(ws.Akbk, mats[k], ws.bracket)
-        @. out += ws.Akbk
+        _accum_kernel!(out, ws.Akbk)
     end
     return out
 end
@@ -255,10 +292,16 @@ function _efficient_controlled_solve_dynamic(co, ψ0, frequencies, Δt, nsteps, 
     ws = _EffControlledDynWS(N, length(mats), S + 1)
     freqs = wp.freqs
 
-    # Flattened carrier envelopes and their per-step derivative buffer.
+    # Flattened carrier envelopes and their per-step derivative buffers.  Endpoint
+    # quantities at tₙ are identical to the previous step's t_{n+1} (same time, same
+    # values), so the envelope-derivative evaluation and operator realization run
+    # once per step instead of twice: `edL`/`edR` ping-pong the envelope-derivative
+    # buffers between steps and `AL`/`AdL` carry the left-endpoint operators, both
+    # primed below at the first step's left endpoint t = 0.
     env_tuple = _flatten_envelopes(co.controls)
     ncarrier = length(env_tuple)
-    edbuf = Vector{SVector{S + 1,ComplexF64}}(undef, ncarrier)
+    edL = Vector{SVector{S + 1,ComplexF64}}(undef, ncarrier)
+    edR = Vector{SVector{S + 1,ComplexF64}}(undef, ncarrier)
     φbuf = Vector{ComplexF64}(undef, ncarrier)
 
     ψ = Vector{ComplexF64}(undef, N); ψ .= ψ0
@@ -278,24 +321,29 @@ function _efficient_controlled_solve_dynamic(co, ψ0, frequencies, Δt, nsteps, 
     save_final_only || (history[:, 1] .= ψ)
     col = 2
 
+    # Prime the first step's left endpoint (t = 0): envelope derivatives and operators.
+    _write_env_derivs!(edL, env_tuple, zero(Δt), DerivativeUpTo{S}())
+    AL = evaluate(co, zero(Δt), Derivative{0}())
+    AdL = S >= 2 ? evaluate(co, zero(Δt), Derivative{1}()) : AL
+
     for n in 1:nsteps
         t0 = _stats_tick(stats)
-        t_n = (n - 1) * Δt; t_np1 = n * Δt; mid = t_n + Δt / 2
+        t_np1 = n * Δt; mid = (n - 1) * Δt + Δt / 2
         @. φbuf = cis(wp.ν * mid)                       # shared midpoint phase, both sides
-        # explicit side:  rhs = ψ + M_E ψ
-        AE = evaluate(co, t_n, Derivative{0}())
-        AdE = S >= 2 ? evaluate(co, t_n, Derivative{1}()) : AE
-        _write_env_derivs!(edbuf, env_tuple, t_n, DerivativeUpTo{S}())
-        _build_generators!(ws.G, wp.WE, wp.ranges, edbuf, φbuf, Val(S))
-        _eff_apply_M!(ws.Mψ, ψ, mats, AE, AdE, freqs, ws, Val(S))
+        # explicit side:  rhs = ψ + M_E ψ.  The left-endpoint envelope derivatives
+        # (edL) and operators (AL, AdL) were realized as the previous step's right
+        # endpoint; only the WE-weighted generators (which also depend on the
+        # current midpoint phase) are rebuilt here.
+        _build_generators!(ws.G, wp.WE, wp.ranges, edL, φbuf, Val(S))
+        _eff_apply_M!(ws.Mψ, ψ, mats, AL, AdL, freqs, ws, Val(S))
         @. ws.rhs = ψ + ws.Mψ
-        # implicit side:  refresh the operators at t_{n+1}, rebuild the implicit
+        # implicit side:  realize the operators at t_{n+1}, rebuild the implicit
         # generators G_I (reused across GMRES iterations), then solve
         # (I - M_I) ψ_{n+1} = rhs matrix-free.
         ia.Aop = evaluate(co, t_np1, Derivative{0}())
         ia.Adop = S >= 2 ? evaluate(co, t_np1, Derivative{1}()) : ia.Aop
-        _write_env_derivs!(edbuf, env_tuple, t_np1, DerivativeUpTo{S}())
-        _build_generators!(ws.G, wp.WI, wp.ranges, edbuf, φbuf, Val(S))
+        _write_env_derivs!(edR, env_tuple, t_np1, DerivativeUpTo{S}())
+        _build_generators!(ws.G, wp.WI, wp.ranges, edR, φbuf, Val(S))
         warm_start && Krylov.warm_start!(kws, ψ)
         Krylov.gmres!(kws, L, ws.rhs; atol = atol, rtol = rtol)
         ψ .= Krylov.solution(kws)
@@ -308,6 +356,9 @@ function _efficient_controlled_solve_dynamic(co, ψ0, frequencies, Δt, nsteps, 
             history[:, col] .= ψ
             col += 1
         end
+        # This step's right endpoint t_{n+1} is the next step's left endpoint tₙ.
+        edL, edR = edR, edL
+        AL = ia.Aop; AdL = ia.Adop
     end
     return save_final_only ? ψ : history
 end

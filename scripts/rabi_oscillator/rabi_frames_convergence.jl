@@ -35,6 +35,7 @@ using DrWatson
 using FilonResearch
 using StaticArrays
 using LinearAlgebra
+using Printf
 using OrdinaryDiffEqVerner
 using CairoMakie
 
@@ -307,5 +308,175 @@ make_combined_figure(nsteps_list, errors_lab, errors_rwa, rwa_error, T;
                                   projectdir("FilonProjectOverleaf", "Figures", pdf_name)],
                      png_paths = [plotsdir("rabi_oscillator", png_name),
                                   projectdir("FilonProjectOverleaf", "FiguresPNG", png_name)])
+
+# =============================================================================
+# Step-size tables (mirroring the CNOT3 tables in scripts/cnot3/cnot3_tables_paper.jl)
+# =============================================================================
+#
+# "To reach final-time error X, which method/order steps the coarsest, and by how
+# much?"  Columns are target errors 1e-1..1e-7; rows are (method, s); the lab and
+# RWA frames are stacked as blocks of one tabular.  Two tables are produced:
+#
+#   1. required_dt — largest Δt reaching each target (the raw numbers; from these
+#                    any step-size ratio, e.g. Filon-vs-Hermite at fixed s, is exact)
+#   2. speedup_dt  — Δt ratio to the coarsest-stepping (method, s) in that column ("--")
+#
+# The Rabi experiment records only error vs Δt (no timing), so unlike CNOT3 there
+# are no time/work-precision tables.  Values come from the same curves as the
+# figure, with log-log interpolation between consecutive points; targets the data
+# never reaches are extrapolated from the finest run at the design order
+# O(Δt^{2(s+1)}) and marked with an asterisk.  In the RWA frame the drive carrier is
+# absent, so Controlled Filon coincides with Filon and is omitted (as in the figure).
+
+const TABLE_TARGETS = [10.0^(-k) for k in 1:7]
+const TABLE_ROW_LABEL = Dict(:CHermite => "Hermite", :Filon => "Filon", :CFilon => "C-Filon")
+dts = T ./ nsteps_list   # Δt for each run, aligned with the error vectors by index
+frame_methods(frame) = frame == "rwa" ? (:CHermite, :Filon) : (:CHermite, :Filon, :CFilon)
+
+# Coarsest `vals` (largest Δt) subject to error <= X on the piecewise-linear (in
+# log-log) curve through (vals_i, errs_i), connected in nsteps order as plotted.
+# `pick` is `maximum` (Δt).  Returns `nothing` if X is never reached.
+function value_at_target(vals, errs, X, pick)
+    cands = [vals[i] for i in eachindex(vals) if errs[i] <= X]
+    for i in firstindex(vals):lastindex(vals)-1
+        e1, e2 = errs[i], errs[i+1]
+        min(e1, e2) < X < max(e1, e2) || continue
+        λ = (log(X) - log(e1)) / (log(e2) - log(e1))
+        push!(cands, exp((1 - λ) * log(vals[i]) + λ * log(vals[i+1])))
+    end
+    return isempty(cands) ? nothing : pick(cands)
+end
+
+# Per-target required Δt for one (method, s) series, as a vector of NamedTuples over
+# TABLE_TARGETS.  Targets the data never reaches are extrapolated from the finest run
+# at the design order p = 2(s+1): Δt* = Δt_end (X/err_end)^{1/p}, marked `ex = true`.
+function dt_requirements(dts, errs, s)
+    p = 2 * (s + 1)
+    map(TABLE_TARGETS) do X
+        dtX = value_at_target(dts, errs, X, maximum)
+        dtX === nothing ? (dt = dts[end] * (X / errs[end])^(1 / p), ex = true) :
+                          (dt = dtX, ex = false)
+    end
+end
+
+# Mantissa(exponent) notation: "1.1(2)" for 110, "3.7(-5)" for 3.7e-5.
+function fmt_mant_exp(v)
+    e = floor(Int, log10(v))
+    m = round(v / 10.0^e; digits = 1)
+    m >= 10 && (m /= 10; e += 1)
+    return @sprintf("%.1f(%d)", m, e)
+end
+
+# Two significant digits: single-digit numbers plainly, everything else mantissa(exp).
+fmt_num(v) = 0.95 <= v < 9.95 ? @sprintf("%.1f", v) : fmt_mant_exp(v)
+
+# Entries for one frame block: a Vector of (label, s, cells) over its methods × SVALS.
+# `kind` is :raw_dt (largest Δt reaching the target) or :speedup_dt (ratio of the
+# coarsest-stepping row's Δt to this row's Δt, with the coarsest row marked "--").
+function block_rows(errors, frame, kind)
+    methods = frame_methods(frame)
+    reqs = Dict((m, s) => dt_requirements(dts, errors[m][si], s)
+                for m in methods for (si, s) in enumerate(SVALS))
+    order = [(m, s) for m in methods for s in SVALS]
+    rows = Tuple{String,Int,Vector{String}}[]
+    for (m, s) in order
+        cells = map(eachindex(TABLE_TARGETS)) do j
+            c = reqs[(m, s)][j]
+            if kind == :raw_dt
+                (c.ex ? "*" : "") * fmt_num(c.dt)
+            else
+                best = argmax([reqs[r][j].dt for r in order])
+                bc = reqs[order[best]][j]
+                if (m, s) == order[best]
+                    (bc.ex ? "*" : "") * "--"
+                else
+                    ((bc.ex || c.ex) ? "*" : "") * fmt_num(bc.dt / c.dt)
+                end
+            end
+        end
+        push!(rows, (TABLE_ROW_LABEL[m], s, cells))
+    end
+    return rows
+end
+
+# Write one booktabs tabular (no surrounding table environment; the paper controls
+# placement/caption/label) to the plots dir and, if present, the Overleaf Tables/.
+function save_rabi_table(basename, title, caption, blocks)
+    ncols = 2 + length(TABLE_TARGETS)
+    header = "Method & \$s\$ & " *
+             join(["\$10^{-$k}\$" for k in 1:length(TABLE_TARGETS)], " & ") * " \\\\"
+    lines = String[
+        "% Auto-generated by scripts/rabi_oscillator/rabi_frames_convergence.jl; do not edit.",
+        "% $caption",
+        "\\begin{tabular}{ll" * "r"^length(TABLE_TARGETS) * "}",
+        "    \\toprule",
+        "    \\multicolumn{$ncols}{c}{$title} \\\\",
+        "    \\midrule[\\heavyrulewidth]",
+        "    & & \\multicolumn{$(length(TABLE_TARGETS))}{c}{Target final-time error} \\\\",
+        "    \\cmidrule(lr){3-$ncols}",
+        "    " * header,
+    ]
+    for (block_title, rows) in blocks
+        append!(lines, ["    \\midrule",
+                        "    \\multicolumn{$ncols}{c}{$block_title} \\\\",
+                        "    \\midrule"])
+        for (k, (label, s, cells)) in enumerate(rows)
+            s == first(SVALS) && k > 1 && push!(lines, "    \\addlinespace")
+            name = s == first(SVALS) ? label : ""
+            push!(lines, "    $name & $s & " * join(cells, " & ") * " \\\\")
+        end
+    end
+    append!(lines, ["    \\bottomrule", "\\end{tabular}", ""])
+    dests = [plotsdir("rabi_oscillator", "$basename.tex")]
+    overleaf = projectdir("FilonProjectOverleaf")
+    isdir(overleaf) && push!(dests, joinpath(overleaf, "Tables", "$basename.tex"))
+    for p in dests
+        mkpath(dirname(p))
+        write(p, join(lines, "\n"))
+        println("  saved → ", p)
+    end
+end
+
+# Aligned stdout rendering of a frame block (the on-screen sanity check).
+function print_rabi_block(title, rows)
+    println("\n  ", title)
+    w = max(11, maximum(length(c) for (_, _, cs) in rows for c in cs) + 2)
+    println("    ", rpad("method", 9), rpad("s", 3),
+            join([lpad("1e-$k", w) for k in 1:length(TABLE_TARGETS)]))
+    for (label, s, cells) in rows
+        println("    ", rpad(label, 9), rpad(s, 3), join([lpad(c, w) for c in cells]))
+    end
+end
+
+const FRAME_TITLES = ("lab" => "Lab Frame", "rwa" => "RWA Frame")
+const FRAME_ERRORS = Dict("lab" => errors_lab, "rwa" => errors_rwa)
+const EXTRAP_NOTE = "Asterisked entries rely on extrapolation from the finest run at " *
+                    "the design order \$\\mathcal{O}(\\Delta t^{2(s+1)})\$."
+const RWA_NOTE = "In the RWA frame the drive carrier is absent, so the Controlled Filon " *
+                 "method coincides with Filon and is omitted."
+
+println("\n", "=" ^ 70, "\nStep-size tables\n", "=" ^ 70)
+for kind in (:raw_dt, :speedup_dt)
+    blocks = [(t, block_rows(FRAME_ERRORS[f], f, kind)) for (f, t) in FRAME_TITLES]
+    if kind == :raw_dt
+        save_rabi_table("rabi_required_dt", "Required Step Size \$\\Delta t\$",
+            "Rabi oscillator experiment (\\Cref{sec:rabi-oscillator-experiment}); the " *
+            "blocks are the lab and RWA frames. Largest \$\\Delta t\$ reaching each " *
+            "target final-time error; \$a(b)\$ denotes \$a \\times 10^{b}\$. " *
+            "$RWA_NOTE $EXTRAP_NOTE", blocks)
+    else
+        save_rabi_table("rabi_speedup_dt", "Relative Step Size",
+            "Rabi oscillator experiment (\\Cref{sec:rabi-oscillator-experiment}); the " *
+            "blocks are the lab and RWA frames, compared within each block. For each " *
+            "target final-time error the (method, \$s\$) pair reaching it at the largest " *
+            "\$\\Delta t\$ is marked ``--'' and every other row reports the ratio of that " *
+            "largest \$\\Delta t\$ to its own required \$\\Delta t\$; \$a(b)\$ denotes " *
+            "\$a \\times 10^{b}\$. $RWA_NOTE $EXTRAP_NOTE", blocks)
+    end
+    label = kind == :raw_dt ? "Required Step Size Δt" : "Relative Step Size"
+    for (f, t) in FRAME_TITLES
+        print_rabi_block("$label ($t)", block_rows(FRAME_ERRORS[f], f, kind))
+    end
+end
 
 println("\nDone.")

@@ -1,230 +1,296 @@
 # =============================================================================
-# CNOT3 convergence — paper figure (lab + RWA frames), Rabi-figure styling
+# CNOT3 paper figures (lab + RWA frames), SIAM-single-column styling
 # =============================================================================
 #
-# A combined two-panel convergence figure (lab and RWA frames, sharing a y-axis)
-# in the same style as scripts/rabi_oscillator/rabi_frames_convergence.jl: paper
-# sized (SIAM single column), method = colour + linestyle, order s = marker, Δt
-# on the x-axis, a horizontal legend below, saved as a vector PDF (plus a PNG
-# preview) to both the DrWatson plots dir and the Overleaf Figures dir.
+# Produces three two-panel (lab | RWA) figures, in one shared style, for each
+# initial condition (essential gate basis and uniform superposition):
 #
-# Reference: like the Rabi figure, each frame's error is measured against a Vern9
-# (adaptive RK) solution of that frame's own ODE at abstol=reltol=1e-13 — an
-# independent reference, not the finest Hermite run.  The RWA modeling error (the
-# firebrick ceiling) is the Vern9 RWA-frame vs Vern9 no-RWA-frame final-state
-# difference: the two solve the same rotating-frame dynamics differing only by the
-# dropped counter-rotating terms, so their separation at T is the accuracy floor
-# no RWA-frame computation can beat.  The Vern9 references are cached.
+#   1. convergence   — Δt (x) vs final-time error (y)
+#   2. work-precision — final-time error (x) vs elapsed solve time (y); points
+#                       are connected in order of increasing nsteps
+#   3. gmres          — Δt (x) vs mean GMRES iterations per step (y)
 #
-# Run (data is commit-namespaced; point at the collection commit):
-#   CNOT3_COMMIT=46407571d844c93a725b139e763f21dfa1bc1fcc \
-#     julia --project=. scripts/cnot3/cnot3_convergence_paper.jl
+# Method = colour + linestyle, order s = marker.  "Hermite" is the
+# controlled-Hermite method (the ω = 0 Filon), which runs on the same
+# ControlledOperator / GMRES path as the Filon methods, so all three curves are
+# compared like-for-like.  Errors are measured against the cached Vern9 reference
+# for each (frame, initialCondition) — precompute with cnot3_collect_reference.jl.
+#
+# The companion speedup/Δt tables are produced by cnot3_tables_paper.jl, which
+# shares src/cnot3_paper_common.jl but does not load Makie.
+#
+# Figures are written to the DrWatson plots dir, and (only if the Overleaf dir
+# exists) copied into FilonProjectOverleaf: PDFs to Figures/, PNGs to FiguresPNG/.
+#
+# Run:  julia --project=. scripts/cnot3/cnot3_convergence_paper.jl
+#       (CNOT3_INIT=basis to restrict to one initial condition)
 # =============================================================================
 
 using DrWatson
 @quickactivate "FilonExperiments"
 
-using DataFrames
-using LinearAlgebra
 using CairoMakie
-using FilonResearch
-using QuantumGateDesign
-using OrdinaryDiffEqVerner
 
-# Problem builders + make_initial_condition + qgd_to_controlled_operator.
-include(srcdir("cnot3_run.jl"))
+include(srcdir("cnot3_paper_common.jl"))   # constants, run loading, frame_df, ...
 
 CairoMakie.set_theme!(CairoMakie.theme_latexfonts())
 
-const prefix   = get(ENV, "CNOT3_PREFIX", "cnot3Convergence")
-const commit   = get(ENV, "CNOT3_COMMIT", gitdescribe(projectdir()))
-const datapath = datadir(prefix, commit)
-const init     = get(ENV, "CNOT3_INIT", "basis")
-
-# Problem size (must match the collected sweep).
-const NOSC = 10
-const NGUARD = 2
-const TMAX = 550.0
-
-# Method = colour + linestyle (so coincident curves stay distinct), order = marker.
-# "Hermite" here is the efficient controlled-Hermite method (the ω=0 Filon), which
-# is numerically identical to the regular Hermite method but runs on the same
-# ControlledOperator path as the Filon methods.
-const METHODS = (:filon, :controlled_filon, :controlled_hermite)   # display / legend order
-const METHOD_LABELS = Dict(:filon => "Filon", :controlled_filon => "Controlled Filon",
-                           :controlled_hermite => "Hermite")
-const METHOD_COLOR = Dict(:filon              => Makie.wong_colors()[1],   # blue
-                          :controlled_filon   => Makie.wong_colors()[2],   # orange
-                          :controlled_hermite => Makie.wong_colors()[3])   # green
-const METHOD_LS = Dict(:filon => :solid, :controlled_filon => (:dash, 1.0),
-                       :controlled_hermite => (:dashdot, 1.0))
-const SVALS = (0, 1, 2)
+const METHODS = (:Filon, :ControlledFilon, :Hermite)   # display / legend order
+const METHOD_LABELS = Dict(:Filon => "Filon", :ControlledFilon => "Controlled Filon",
+                           :Hermite => "Hermite")
+const METHOD_COLOR = Dict(:Filon           => Makie.wong_colors()[1],   # blue
+                          :ControlledFilon => Makie.wong_colors()[2],   # orange
+                          :Hermite         => Makie.wong_colors()[3])   # green
+const METHOD_LS = Dict(:Filon => :solid, :ControlledFilon => (:dash, 1.0),
+                       :Hermite => (:dashdot, 1.0))
 const ORDER_MARKERS = (:circle, :rect, :diamond)
-
-# Drop diverged coarse runs (upper) and the round-off floor (lower) before plotting.
-const ERROR_WINDOW = (1e-13, 1e1)
 
 # Paper sizing: SIAM single column \linewidth = 5.125 in, 1 pt = 1/72 in.
 const PAPER_PT_PER_IN = 72
 const PAPER_WIDTH_IN  = 5.125
 
-# -----------------------------------------------------------------------------
-# Vern9 reference: solve dψ/dt = A(t)ψ on a frame's own ODE at 1e-13, one column
-# per essential gate state, returning the stacked final state (matches the
-# collected history[:, end] layout).  Cached per frame in the campaign data dir.
-# -----------------------------------------------------------------------------
-function compute_vern9_reference(frame; abstol = 1e-13, reltol = 1e-13)
-    fr = Symbol(frame)
-    qgd_prob = cnot3_hoho_qgd_prob(N_osc_levels = NOSC, N_guard_levels = NGUARD,
-                                   Tmax = TMAX, frame = fr)
-    controls, pcof = cnot3_hoho_controls_and_pcof(frame = fr)
-    co = qgd_to_controlled_operator(qgd_prob, controls, pcof)   # A(t) = Σ cₖ(t) Aₖ
-    ic = make_initial_condition("basis", qgd_prob)              # N_tot × N_ess
-    op = Operator(co, 0.0)                                      # reusable A(t) buffer
-    function rhs!(du, u, p, t)
-        evaluate!(op, co, t)                                   # refresh A(t) in place
-        mul!(du, op, u)
-        return nothing
-    end
-    finals = map(eachcol(ic)) do c
-        u0 = ComplexF64.(Vector(c))
-        sol = solve(ODEProblem(rhs!, u0, (0.0, TMAX)), Vern9();
-                    abstol = abstol, reltol = reltol, save_everystep = false)
-        Vector{ComplexF64}(sol.u[end])
-    end
-    return reduce(vcat, finals)
+# The method/order legend is included by default; set CNOT3_LEGEND=0 to omit it
+# (e.g. when the Rabi convergence figure's identical legend is already in view).
+const SHOW_LEGEND = get(ENV, "CNOT3_LEGEND", "1") ∈ ("1", "true", "yes")
+
+# Logarithmic minor ticks (2..9 × 10^k) over a generous exponent range; Makie
+# clips them to each axis's visible window.
+const LOG_MINOR_TICKS = vec([m * 10.0^k for m in 2:9, k in -8:8])
+
+# Largest "nice" value (1/2/5 × 10^k) at most x — a clean lower axis limit that
+# sits just below the data instead of leaving a thin autoscaled sliver.
+function nice_floor(x)
+    e = floor(Int, log10(x))
+    m = x / 10.0^e
+    base = m >= 5 ? 5.0 : m >= 2 ? 2.0 : 1.0
+    return base * 10.0^e
 end
 
-function vern9_reference(frame)
-    cfg = Dict("frame" => string(frame), "abstol" => 1e-13, "reltol" => 1e-13,
-               "Nosc" => NOSC, "Nguard" => NGUARD, "Tmax" => TMAX)
-    # Cache in a SEPARATE data dir (not under the run prefix) so collect_results
-    # over the run data never picks these reference files up.
-    data, _ = produce_or_load(cfg, datadir("cnot3_vern9ref", commit);
-                              prefix = "cnot3_vern9ref", tag = false) do _
-        println("  computing Vern9 reference for frame=", frame, " (this is the slow step)")
-        @strdict uref = compute_vern9_reference(frame)
-    end
-    return data["uref"]
-end
-
-# -----------------------------------------------------------------------------
-# Data: per-frame DataFrame with final-time error vs the frame's Vern9 reference.
-# -----------------------------------------------------------------------------
-function frame_errors(df_all, frame, uref)
-    # isequal (not .==) so any non-run rows with `missing` columns filter out cleanly.
-    mask = isequal.(df_all.initialCondition, init) .& isequal.(df_all.frame, string(frame))
-    df = df_all[mask, :]
-    isempty(df) && error("No runs for frame=$frame, init=$init in $datapath")
-    Tmax = first(df).Tmax
-    df = copy(df)
-    df.final_error = [norm(h[:, end] .- uref) for h in df.history]
-    return df, Tmax
-end
-
-"(Δt, error) for one (method, s): ERROR_WINDOW-filtered, sorted by nsteps."
-function curve(df, Tmax, m, s)
-    sub = df[(df.method .== m) .& (df.s .== s), :]
-    e = sub.final_error
-    keep = (e .>= ERROR_WINDOW[1]) .& (e .<= ERROR_WINDOW[2]) .& isfinite.(e)
-    sub = sub[keep, :]
-    sort!(sub, :nsteps)
-    return Tmax ./ Vector{Float64}(sub.nsteps), Vector{Float64}(sub.final_error)
-end
-
-"Draw one frame's curves on `ax`: the RWA modeling-error ceiling (firebrick),
-then method × order scatter-lines."
-function plot_frame!(ax, df, Tmax, rwa_error; methods = METHODS)
-    rwa_error === nothing ||
-        hlines!(ax, rwa_error; color = :firebrick, linestyle = :dot, linewidth = 1.5)
-    for m in methods, (si, s) in enumerate(SVALS)
-        d, e = curve(df, Tmax, m, s)
-        isempty(d) && continue
-        scatterlines!(ax, d, e; color = METHOD_COLOR[m], linestyle = METHOD_LS[m],
-                      marker = ORDER_MARKERS[si], markersize = 7, linewidth = 1.3)
-    end
-    return ax
-end
-
-# -----------------------------------------------------------------------------
-# Combined figure
-# -----------------------------------------------------------------------------
-function make_combined_figure(; basename = "cnot3_convergence_labrwa")
-    # Independent Vern9 references (cached); RWA modeling error = RWA vs no-RWA.
-    uref_lab   = vern9_reference("lab")
-    uref_rwa   = vern9_reference("rwa")
-    uref_norwa = vern9_reference("norwa")
-    rwa_error  = norm(uref_rwa .- uref_norwa)
-    println("RWA modeling error (Vern9 RWA vs no-RWA at T): ", round(rwa_error; sigdigits = 4))
-
-    # Exclude norwa: the figure shows only lab + RWA, and skipping norwa avoids
-    # mmap-ing any norwa result file that a concurrent collection job is mid-write.
-    df_all = collect_results(datapath; rexclude = [r"frame=norwa"])
-    df_all.method = Symbol.(df_all.method)
-    df_lab, T_lab = frame_errors(df_all, "lab", uref_lab)
-    df_rwa, T_rwa = frame_errors(df_all, "rwa", uref_rwa)
-
-    # Axis window: crop the coarse-Δt blowup band on the right (just past Δt = 1)
-    # and floor the y-axis at 1e-8.
-    XMAX = 1.5
-    YMIN = 1e-8
-    # y top from the data visible within the x-window (even power above it).
-    visE = Float64[]
-    for (df, T) in ((df_lab, T_lab), (df_rwa, T_rwa)), m in METHODS, s in SVALS
-        d, e = curve(df, T, m, s)
-        for i in eachindex(d)
-            d[i] <= XMAX && push!(visE, e[i])
-        end
-    end
-    hi = ceil(Int, log10(maximum(visE)))
-    ypows = -8:2:hi
-    yticks = (10.0 .^ ypows, [L"10^{%$p}" for p in ypows])
-    ylims = (YMIN, 10.0^hi)
-
-    W = PAPER_WIDTH_IN * PAPER_PT_PER_IN
-    fig = Figure(size = (W, 240), fontsize = 8, figure_padding = (2, 3, 2, 2))
-    Label(fig[1, 1:2], "CNOT3 Gate Convergence"; fontsize = 10, font = :bold)
-
-    ax_lab = Axis(fig[2, 1]; title = "Lab Frame", xlabel = L"\Delta t",
-                  ylabel = "Final Time Error", xscale = log10, yscale = log10,
-                  yticks = yticks, limits = ((nothing, XMAX), ylims))
-    ax_rwa = Axis(fig[2, 2]; title = "RWA Frame", xlabel = L"\Delta t",
-                  xscale = log10, yscale = log10, yticks = yticks,
-                  limits = ((nothing, XMAX), ylims))
-    plot_frame!(ax_lab, df_lab, T_lab, rwa_error)
-    plot_frame!(ax_rwa, df_rwa, T_rwa, rwa_error)
-    linkyaxes!(ax_lab, ax_rwa)
-    hideydecorations!(ax_rwa, grid = false)
-
+# Method/order legend (+ optional extra group); concrete Vectors, never Vector{Any}
+# (a Vector{Any} trips a Makie/ComputePipeline text-rendering bug at save time).
+function method_order_legend(legend_extra; order_asymptotic = true)
     method_entries = [LineElement(color = METHOD_COLOR[m], linestyle = METHOD_LS[m], linewidth = 2)
                       for m in METHODS]
     order_entries  = [MarkerElement(marker = ORDER_MARKERS[si], color = :black, markersize = 8)
                       for si in 1:length(SVALS)]
-    order_labels = [L"s=%$(s)\;(\mathcal{O}(\Delta t^{%$(2(s+1))}))" for s in SVALS]
-    modeling_entries = [LineElement(color = :firebrick, linestyle = :dot, linewidth = 2)]
-    Legend(fig[3, 1:2],
-           [method_entries, order_entries, modeling_entries],
-           [[METHOD_LABELS[m] for m in METHODS], order_labels, ["RWA Error"]],
-           ["Method", "Order", "Modeling"];
-           orientation = :horizontal, framevisible = true, titleposition = :left,
-           nbanks = 3, patchsize = (14f0, 8f0), colgap = 5, titlegap = 4,
-           labelsize = 7, titlesize = 7, padding = (4f0, 4f0, 3f0, 3f0))
-    rowgap!(fig.layout, 1, 1)
-    rowgap!(fig.layout, 2, 4)
+    # The GMRES iteration count is not asymptotic in Δt, so its legend drops the
+    # O(Δtᵖ) tag and shows the bare s value.
+    order_labels = order_asymptotic ?
+        [L"s=%$(s)\;(\mathcal{O}(\Delta t^{%$(2(s+1))}))" for s in SVALS] :
+        [L"s=%$(s)" for s in SVALS]
+    method_labs = [METHOD_LABELS[m] for m in METHODS]
+    legend_extra === nothing &&
+        return ([method_entries, order_entries], [method_labs, order_labels], ["Method", "Order"])
+    return ([method_entries, order_entries, legend_extra[1]],
+            [method_labs, order_labels, legend_extra[2]],
+            ["Method", "Order", legend_extra[3]])
+end
 
-    pdf_paths = [plotsdir("cnot3", "$(basename).pdf"),
-                 projectdir("FilonProjectOverleaf", "Figures", "$(basename).pdf")]
-    png_paths = [plotsdir("cnot3", "$(basename).png"),
-                 projectdir("FilonProjectOverleaf", "FiguresPNG", "$(basename).png")]
-    for p in pdf_paths
-        mkpath(dirname(p)); save(p, fig; pt_per_unit = 1); println("  saved → ", p)
+# Write fig to the DrWatson plots dir and (if it exists) the Overleaf dir:
+# PDFs to Figures/, PNGs to FiguresPNG/.
+function save_figure(fig, basename)
+    overleaf = projectdir("FilonProjectOverleaf")
+    overleaf_subdir = Dict("pdf" => "Figures", "png" => "FiguresPNG")
+    for (ext, unit) in (("pdf", 1), ("png", 3))
+        fname = "$(basename).$(ext)"
+        dests = [plotsdir("cnot3", fname)]
+        isdir(overleaf) && push!(dests, joinpath(overleaf, overleaf_subdir[ext], fname))
+        for p in dests
+            mkpath(dirname(p))
+            ext == "pdf" ? save(p, fig; pt_per_unit = unit) : save(p, fig; px_per_unit = unit)
+            println("  saved → ", p)
+        end
     end
-    for p in png_paths
-        mkpath(dirname(p)); save(p, fig; px_per_unit = 3); println("  saved → ", p)
+end
+
+# -----------------------------------------------------------------------------
+# Shared two-panel scaffold: `draw_panel!(ax, df)` draws one frame's curves.
+# -----------------------------------------------------------------------------
+function paper_2panel(df_lab, df_rwa, draw_panel!; title, xlabel, ylabel,
+                      xticks = Makie.automatic, yticks = Makie.automatic,
+                      xlims = (nothing, nothing),
+                      ylims = (nothing, nothing), ylims_rwa = nothing,
+                      link_yaxis = true, yminor = false,
+                      legend = true, legend_extra = nothing,
+                      order_asymptotic = true, basename)
+    W = PAPER_WIDTH_IN * PAPER_PT_PER_IN
+    fig = Figure(size = (W, legend ? 216 : 178), fontsize = 8, figure_padding = (2, 3, 2, 2))
+    Label(fig[1, 1:2], title; fontsize = 10, font = :bold)
+
+    # The rwa panel may carry its own y-range (only meaningful when y is unshared).
+    rwa_ylims = ylims_rwa === nothing ? ylims : ylims_rwa
+    yminor_kw = yminor ? (; yminorticksvisible = true, yminorticks = LOG_MINOR_TICKS) : (;)
+    ax_lab = Axis(fig[2, 1]; title = "Lab Frame", xlabel = xlabel, ylabel = ylabel,
+                  xscale = log10, yscale = log10, xticks = xticks, yticks = yticks,
+                  limits = (xlims, ylims), yminor_kw...)
+    ax_rwa = Axis(fig[2, 2]; title = "RWA Frame", xlabel = xlabel,
+                  xscale = log10, yscale = log10, xticks = xticks, yticks = yticks,
+                  limits = (xlims, rwa_ylims), yminor_kw...)
+    draw_panel!(ax_lab, df_lab)
+    draw_panel!(ax_rwa, df_rwa)
+    # Share both axes (linked) or only the x-axis; either way the rwa panel keeps
+    # its own y tick labels so each side can be read directly.
+    link_yaxis ? linkaxes!(ax_lab, ax_rwa) : linkxaxes!(ax_lab, ax_rwa)
+
+    if legend
+        groups, labs, titls = method_order_legend(legend_extra; order_asymptotic)
+        Legend(fig[3, 1:2], groups, labs, titls;
+               orientation = :horizontal, framevisible = true, titleposition = :left,
+               nbanks = 3, patchsize = (14f0, 8f0), colgap = 5, titlegap = 4,
+               labelsize = 7, titlesize = 7, padding = (4f0, 4f0, 3f0, 3f0))
     end
+    rowgap!(fig.layout, 1, 1)
+    legend && rowgap!(fig.layout, 2, 4)
+    colgap!(fig.layout, 1, 6)
+
+    save_figure(fig, basename)
     return fig
 end
 
-println("Reading ", datapath)
-make_combined_figure()
+# -----------------------------------------------------------------------------
+# 2x2 scaffold: stack two frame-pair quantities (rows) over a shared legend.
+# Each `spec` is a NamedTuple describing one row: (draw!, xlabel, ylabel, xlims,
+# ylims, xticks, yticks).  Columns are lab (left) | rwa (right), linked per row.
+# -----------------------------------------------------------------------------
+function paper_4panel(df_lab, df_rwa, top, bottom; title, legend = true,
+                      legend_extra = nothing, basename)
+    W = PAPER_WIDTH_IN * PAPER_PT_PER_IN
+    fig = Figure(size = (W, legend ? 373 : 335), fontsize = 8, figure_padding = (2, 3, 2, 2))
+    Label(fig[1, 1:2], title; fontsize = 10, font = :bold)
+
+    function frame_row!(row, spec, coltitles; xlabelpadding = 3.0, link_yaxis = true, yminor = false)
+        yminor_kw = yminor ? (; yminorticksvisible = true, yminorticks = LOG_MINOR_TICKS) : (;)
+        ax_lab = Axis(fig[row, 1]; title = coltitles ? "Lab Frame" : "",
+                      xlabel = spec.xlabel, ylabel = spec.ylabel, xlabelpadding = xlabelpadding,
+                      xscale = log10, yscale = log10, xticks = spec.xticks, yticks = spec.yticks,
+                      limits = (spec.xlims, spec.ylims), yminor_kw...)
+        ax_rwa = Axis(fig[row, 2]; title = coltitles ? "RWA Frame" : "",
+                      xlabel = spec.xlabel, xlabelpadding = xlabelpadding,
+                      xscale = log10, yscale = log10, xticks = spec.xticks, yticks = spec.yticks,
+                      limits = (spec.xlims, get(spec, :ylims_rwa, spec.ylims)), yminor_kw...)
+        spec.draw!(ax_lab, df_lab)
+        spec.draw!(ax_rwa, df_rwa)
+        # Either way the rwa panel keeps its own y tick labels (read each side directly).
+        link_yaxis ? linkaxes!(ax_lab, ax_rwa) : linkxaxes!(ax_lab, ax_rwa)
+    end
+    # Pull the top row's x-label tight against its tick labels so it reads as that
+    # row's axis label, not a heading for the bottom row.  The work-precision row
+    # (bottom) keeps each frame's own y-axis since their elapsed-time ranges differ.
+    frame_row!(2, top, true; xlabelpadding = 0.0)
+    frame_row!(3, bottom, false; link_yaxis = false, yminor = true)
+
+    if legend
+        groups, labs, titls = method_order_legend(legend_extra)
+        Legend(fig[4, 1:2], groups, labs, titls;
+               orientation = :horizontal, framevisible = true, titleposition = :left,
+               nbanks = 3, patchsize = (14f0, 8f0), colgap = 5, titlegap = 4,
+               labelsize = 7, titlesize = 7, padding = (4f0, 4f0, 3f0, 3f0))
+    end
+    rowgap!(fig.layout, 1, 1)
+    rowgap!(fig.layout, 2, 8)
+    legend && rowgap!(fig.layout, 3, 4)
+    colgap!(fig.layout, 1, 6)
+    # Make the convergence (top) row a touch shorter than the work-precision row.
+    rowsize!(fig.layout, 2, Auto(0.9))
+    rowsize!(fig.layout, 3, Auto(1.0))
+
+    save_figure(fig, basename)
+    return fig
+end
+
+# Scatter-line one (method, s) series with x/y vectors already chosen.
+function draw_series!(ax, df, xof, yof; keepfn = (x, y) -> trues(length(x)))
+    for m in METHODS, (si, s) in enumerate(SVALS)
+        sub = seriesof(df, m, s)
+        isempty(sub) && continue
+        x = xof(sub); y = yof(sub)
+        keep = isfinite.(x) .& isfinite.(y) .& keepfn(x, y)
+        any(keep) || continue
+        scatterlines!(ax, x[keep], y[keep]; color = METHOD_COLOR[m], linestyle = METHOD_LS[m],
+                      marker = ORDER_MARKERS[si], markersize = 7, linewidth = 1.3)
+    end
+end
+
+const FIREBRICK_LEGEND = ([LineElement(color = :firebrick, linestyle = :dot, linewidth = 2)],
+                          ["RWA Error"], "Modeling")
+
+# -----------------------------------------------------------------------------
+# The three figures for one initial condition.
+# -----------------------------------------------------------------------------
+function figures_for(df_all, init)
+    df_lab = frame_df(df_all, "lab", init)
+    df_rwa = frame_df(df_all, "rwa", init)
+    rwa_error = norm(uref_of("rwa", init) .- uref_of("norwa", init))
+    icl = ic_label(init)
+    println("  init=$init: RWA modeling error = ", round(rwa_error; sigdigits = 4))
+
+    vof(col) = sub -> Vector{Float64}(sub[!, col])
+    dtof = sub -> Vector{Float64}(sub.dt)
+
+    # 1. Convergence: Δt vs final-time error (y capped at 1e0).
+    # Major ticks on every decade; Makie clips the x ticks to the visible range.
+    ypows = -8:0
+    xpows = -8:0
+    # Clamp the lower Δt limit to a clean value just below the finest run, so the
+    # left edge does not sit a sliver short of a decade.
+    dt_min = min(minimum(df_lab.dt), minimum(df_rwa.dt))
+    conv_xlims = (nice_floor(dt_min), 1.5)
+    conv!(ax, df) = begin
+        hlines!(ax, rwa_error; color = :firebrick, linestyle = :dot, linewidth = 1.5)
+        draw_series!(ax, df, dtof, vof(:final_error); keepfn = (d, e) -> in_window(e))
+    end
+    paper_2panel(df_lab, df_rwa, conv!;
+        title = "CNOT Gate Convergence ($icl)", xlabel = L"\Delta t",
+        ylabel = "Final Time Error", xlims = conv_xlims, ylims = (1e-8, 1e0),
+        xticks = (10.0 .^ xpows, [L"10^{%$p}" for p in xpows]),
+        yticks = (10.0 .^ ypows, [L"10^{%$p}" for p in ypows]),
+        legend = SHOW_LEGEND, legend_extra = FIREBRICK_LEGEND,
+        basename = "cnot3_convergence_labrwa_$(init)")
+
+    # 2. Work-precision: final-time error vs elapsed time (lines in nsteps order).
+    # The lab and rwa elapsed-time ranges differ, so each frame keeps its own
+    # y-axis, with limits chosen per IC; only the Final Time Error x-axis is shared.
+    wp_ylims_lab, wp_ylims_rwa = init == "basis"   ? ((1e2, 1e4), (1e0, 1e3)) :
+                                 init == "uniform"  ? ((1e1, 1e4), (10.0^-0.5, 1e3)) :
+                                 ((nothing, nothing), (nothing, nothing))
+    # Decade major ticks so the 2..9 minor ticks subdivide them cleanly.
+    wp_ypows = -2:5
+    wp_yticks = (10.0 .^ wp_ypows, [L"10^{%$p}" for p in wp_ypows])
+    wp!(ax, df) = begin
+        vlines!(ax, rwa_error; color = :firebrick, linestyle = :dot, linewidth = 1.5)
+        draw_series!(ax, df, vof(:final_error), vof(:t_elapsed); keepfn = (e, t) -> in_window(e))
+    end
+    paper_2panel(df_lab, df_rwa, wp!;
+        title = "CNOT Work–Precision ($icl)", xlabel = "Final Time Error",
+        ylabel = "Time to Compute (s)", xlims = (1e-8, 1e0), yticks = wp_yticks,
+        ylims = wp_ylims_lab, ylims_rwa = wp_ylims_rwa, link_yaxis = false, yminor = true,
+        legend = SHOW_LEGEND, legend_extra = FIREBRICK_LEGEND,
+        basename = "cnot3_workprecision_labrwa_$(init)")
+
+    # 2b. Combined: convergence (top) over work-precision (bottom), one shared legend.
+    decade_ticks = (10.0 .^ xpows, [L"10^{%$p}" for p in xpows])
+    conv_spec = (draw! = conv!, xlabel = L"\Delta t", ylabel = "Final Time Error",
+                 xlims = conv_xlims, ylims = (1e-8, 1e0),
+                 xticks = decade_ticks, yticks = decade_ticks)
+    wp_spec = (draw! = wp!, xlabel = "Final Time Error", ylabel = "Time to Compute (s)",
+               xlims = (1e-8, 1e0), ylims = wp_ylims_lab, ylims_rwa = wp_ylims_rwa,
+               xticks = decade_ticks, yticks = wp_yticks)
+    paper_4panel(df_lab, df_rwa, conv_spec, wp_spec;
+        title = "CNOT Convergence & Work–Precision ($icl)",
+        legend = SHOW_LEGEND, legend_extra = FIREBRICK_LEGEND,
+        basename = "cnot3_convergence_workprecision_labrwa_$(init)")
+
+    # 3. GMRES iterations: Δt vs mean GMRES iterations per step.
+    gm!(ax, df) = draw_series!(ax, df, dtof, sub -> Vector{Float64}(coalesce.(sub.gmres_mean, NaN)))
+    paper_2panel(df_lab, df_rwa, gm!;
+        title = "CNOT GMRES Iterations ($icl)", xlabel = L"\Delta t",
+        ylabel = "Mean GMRES Iterations / Step", legend = SHOW_LEGEND,
+        order_asymptotic = false,
+        basename = "cnot3_gmres_labrwa_$(init)")
+end
+
+df_all = load_cnot3_runs()
+for init in INITS
+    figures_for(df_all, init)
+end
 println("Done.")

@@ -1,0 +1,295 @@
+% This note was written entirely by Claude (Fable 5, via Claude Code), from
+% the derivations to the numerical verification against the cached Vern9
+% references; see the commit message for provenance.
+\documentclass[11pt]{article}
+
+\usepackage[margin=1.1in]{geometry}
+\usepackage{amsmath, amssymb, mathtools}
+\usepackage{bm}
+\usepackage{booktabs}
+\usepackage[colorlinks=true, linkcolor=blue, citecolor=blue]{hyperref}
+
+\newcommand{\ii}{\mathrm{i}}
+\renewcommand{\Re}{\operatorname{Re}}
+\renewcommand{\Im}{\operatorname{Im}}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\tr}{\operatorname{tr}}
+\newcommand{\norm}[1]{\lVert #1 \rVert}
+\DeclarePairedDelimiter{\abs}{\lvert}{\rvert}
+
+\title{Why a $6\times10^{-3}$ RWA error moves the CNOT gate fidelity\\
+by only $2\times10^{-6}$}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{The apparent paradox}
+
+The CNOT3 convergence experiment solves the same physical gate problem in the
+rotating frame with the rotating wave approximation (\code{rwa}) and without it
+(\code{norwa}, exactly equivalent to the laboratory frame).  The convergence
+figures mark the ``RWA modeling error,'' the 2-norm difference between the two
+converged final states,
+\begin{equation}
+    \norm{\delta} \coloneqq \norm{U_{\mathrm{norwa}} - U_{\mathrm{rwa}}}_F
+    = 6.008\times10^{-3},
+\end{equation}
+as the accuracy floor below which further numerical refinement of the RWA model
+is pointless.  Yet the CNOT gate fidelities of the two solutions, measured
+against the same target, are nearly identical:
+\begin{equation}
+    1 - F_{\mathrm{rwa}} = 4.0269\times10^{-5},
+    \qquad
+    1 - F_{\mathrm{norwa}} = 4.2667\times10^{-5},
+\end{equation}
+a difference of only $2.398\times10^{-6}$, some $2500$ times smaller than
+$\norm{\delta}$.  Both numbers are correct; they measure different things, and
+the gap between them is the product of two geometric effects.  This note works
+them out and verifies each one quantitatively against the computed solutions.
+
+\paragraph{Setup.}  The system has $N = 160$ levels (a 10-level storage cavity
+and two 4-level transmons) and $m = 4$ essential computational states.  A
+solution is the matrix $U \in \mathbb{C}^{N\times m}$ whose columns are the
+essential basis states propagated to the final time $T = 550$~ns; unitarity
+gives $\norm{U}_F = \sqrt{m}$.  The target is the isometry
+$V \in \mathbb{C}^{N\times m}$ (satisfying $V^\dagger V = I_m$) whose columns
+are the CNOT images of the basis states, expressed in the appropriate frame.
+The gate fidelity is the standard trace overlap
+\begin{equation} \label{eq:fidelity}
+    F(U) = \frac{\abs{z}^2}{m^2},
+    \qquad
+    z \coloneqq \tr\bigl(V^\dagger U\bigr) = \langle V, U\rangle_F .
+\end{equation}
+Because the columns of $V$ are supported only on the essential levels, the
+overlap automatically projects out guard-level leakage; leakage lowers
+$\abs{z}$ and hence $F$.
+
+\section{Effect 1: infidelity is quadratic in the miss distance}
+
+Fidelity is blind to a global phase, so the natural distance from a solution to
+the target is the distance to the whole phase orbit
+$\{e^{\ii\varphi} V : \varphi \in [0, 2\pi)\}$:
+\begin{equation}
+    d(U) \coloneqq \min_{\varphi} \,\norm{U - e^{\ii\varphi} V}_F .
+\end{equation}
+Expanding the square and minimizing (the optimum is
+$e^{\ii\varphi^*} = z/\abs{z}$) gives
+$d^2 = \norm{U}_F^2 + \norm{V}_F^2 - 2\abs{z} = 2m - 2\abs{z}$, i.e.\
+$\abs{z} = m - d^2/2$.  Substituting into \eqref{eq:fidelity},
+\begin{equation} \label{eq:quadratic}
+    \boxed{\;
+    1 - F = \frac{d^2}{m}\Bigl(1 - \frac{d^2}{4m}\Bigr)
+          \approx \frac{d^2}{m}
+    \quad (d \ll 1). \;}
+\end{equation}
+Infidelity is \emph{quadratic} in how far the solution sits from the target.
+A miss of size $10^{-2}$ therefore lives on the $10^{-5}$ infidelity scale,
+with no error mechanism required beyond the change of units.  Numerically,
+\begin{equation}
+    d_{\mathrm{rwa}} = 1.2692\times10^{-2}
+    \;\Rightarrow\;
+    \frac{d_{\mathrm{rwa}}^2}{4} = 4.0270\times10^{-5},
+\end{equation}
+which reproduces the measured $1 - F_{\mathrm{rwa}} = 4.0269\times10^{-5}$ to
+four digits (the small deficit is the $d^4$ term).  Likewise
+$d_{\mathrm{norwa}} = 1.3064\times10^{-2}$ gives $4.267\times10^{-5}$.
+
+Effect 1 alone does not resolve the paradox: if the RWA perturbation $\delta$
+pushed the solution straight away from the target, the infidelity would change
+by up to $(2 d\,\norm{\delta} + \norm{\delta}^2)/m = 4.7\times10^{-5}$, i.e.\ it
+would roughly double.  The observed change is twenty times smaller than that
+bound, which is the second effect.
+
+\section{Effect 2: fidelity sees only the radial component}
+
+The infidelity \eqref{eq:quadratic} depends on the state only through the
+scalar $d$, the distance to the target orbit.  Under a perturbation
+$U \mapsto U + \delta$, the overlap shifts by
+$\langle V, \delta\rangle$ and, to first order,
+\begin{equation}
+    \Delta\abs{z}
+    = \Re\Bigl[\tfrac{\bar z}{\abs{z}}\,\langle V, \delta\rangle\Bigr]
+    + O\bigl(\norm{\delta}^2\bigr),
+\end{equation}
+the projection of $\delta$ onto a \emph{single real direction} out of the
+$2Nm = 1280$ real dimensions of the state space: the ``radial'' direction
+$\hat r = (U - e^{\ii\varphi^*}V)/d$ pointing from the phase-aligned target to
+the solution.  Every other direction is tangential and invisible at first
+order.  (Since $d$ is a distance function, it is also globally 1-Lipschitz,
+$\abs{\Delta d} \le \norm{\delta}$, so radial alignment is the worst case, not
+just the first-order one.)
+
+Decomposing the measured RWA perturbation $\delta$ at $U_{\mathrm{rwa}}$ into
+mutually orthogonal pieces gives Table~\ref{tab:decomposition}.
+
+\begin{table}[ht]
+\centering
+\begin{tabular}{llrr}
+\toprule
+component & direction & size & share of $\norm{\delta}^2$ \\
+\midrule
+global phase & $\ii U/\norm{U}_F$ & $5.211\times10^{-3}$ & $75.2\%$ \\
+other tangential & (orthogonal remainder) & $2.990\times10^{-3}$ & $24.8\%$ \\
+radial & $\hat r$ & $2.58\times10^{-5}$ & $0.002\%$ \\
+\midrule
+total & & $6.008\times10^{-3}$ & $100\%$ \\
+\bottomrule
+\end{tabular}
+\caption{Orthogonal decomposition of the RWA perturbation
+$\delta = U_{\mathrm{norwa}} - U_{\mathrm{rwa}}$.}
+\label{tab:decomposition}
+\end{table}
+
+Three-quarters of $\norm{\delta}^2$ is a \emph{relative global phase}: the two
+solutions differ by $e^{\ii\Delta\varphi}$ with $\Delta\varphi = 2.6$~mrad,
+equivalent to a common level shift of under a kilohertz integrated over the
+550~ns gate.  Fidelity is exactly invariant under this component, at all
+orders.  Almost all of the rest is tangential: it changes the \emph{direction}
+in which the solution misses the target, not the distance.  A tangential step
+of length $\tau$ does grow the distance at second order, through the curvature
+of the sphere of radius $d$ around the target orbit,
+$\Delta d \approx \tau^2/(2d)$, and this closes the books exactly:
+\begin{equation}
+    \underbrace{\frac{(2.990\times10^{-3})^2}{2\,(1.2692\times10^{-2})}}_{\text{tangential curvature}}
+    + \underbrace{2.58\times10^{-5}}_{\text{radial}}
+    = 3.78\times10^{-4}
+    \;\approx\;
+    \Delta d_{\mathrm{measured}} = 3.72\times10^{-4},
+\end{equation}
+and then, by \eqref{eq:quadratic},
+\begin{equation}
+    \Delta(1-F)
+    = \frac{d_{\mathrm{norwa}}^2 - d_{\mathrm{rwa}}^2}{m}
+    = 2.398\times10^{-6},
+\end{equation}
+which is the measured infidelity difference.
+
+The tiny radial component is not a coincidence of tuning.  A perturbation
+pointing in a \emph{random} direction of the 1280-dimensional real state space
+would have an expected radial fraction of order $1/\sqrt{1280} \approx 2.8\%$;
+the measured first-order radial fraction is $0.43\%$.  The counter-rotating
+terms have no knowledge of the particular direction in which the optimized
+pulse happens to miss the target, so their effect is generically tangential.
+Physically this is the expected structure of the RWA error: the leading effect
+of the counter-rotating terms is a small coherent energy shift (of
+Bloch--Siegert type~\cite{BlochSiegert1940, Zeuch2020}), whose dominant
+consequence over a long gate is accumulated phase.  The common part of that
+phase is pure gauge (the $75\%$ row of Table~\ref{tab:decomposition}), and the
+differential part redistributes the miss rather than enlarging it.
+
+\section{Reconciling the two plots}
+
+Both numbers are the right answer to different questions.  The 2-norm line
+$\norm{\delta} = 6\times10^{-3}$ answers: \emph{below what numerical error does
+refining the RWA model stop improving agreement with the true (lab-frame)
+state?}  For full-state observables, phases included, the RWA really is a
+$6\times10^{-3}$-level modeling error.  The fidelity comparison answers:
+\emph{does the RWA change how good the gate is?}  There the two effects stack:
+the quadratic map \eqref{eq:quadratic} converts $10^{-2}$-scale distances to
+$10^{-5}$-scale infidelities, and the radial projection suppresses the
+sensitivity to this particular perturbation by another factor of twenty,
+leaving $2.4\times10^{-6}$.  A useful mnemonic for the overall bookkeeping:
+\begin{equation}
+    \underbrace{6.0\times10^{-3}}_{\norm{\delta}}
+    \;\xrightarrow{\text{drop global phase}}\;
+    3.0\times10^{-3}
+    \;\xrightarrow{\text{curvature } \tau^2/2d}\;
+    \Delta d = 3.7\times10^{-4}
+    \;\xrightarrow{\;2d\,\Delta d/m\;}\;
+    2.4\times10^{-6}.
+\end{equation}
+
+\section{Relation to the literature}
+
+The two ingredients are individually well documented, though we are not aware
+of a reference that presents this specific side-by-side observation (state-norm
+RWA error versus gate-fidelity RWA effect) for an optimized multilevel gate.
+
+\emph{Quadratic gap for coherent errors.}  Effect 1 is the same mathematics
+behind a well-known result in the gate-benchmarking literature: for coherent
+(unitary) errors the worst-case error rate (diamond norm) scales as the
+\emph{square root} of the average gate infidelity, so norm-type error measures
+and fidelity-type measures of the same coherent error can differ by orders of
+magnitude~\cite{Sanders2016, Kueng2016, Wallman2016}.  That literature runs the
+argument in the direction ``reported fidelities flatter coherent errors'';
+here the same fact appears in reverse, as a plotted norm error that looks
+alarming on a fidelity scale.
+
+\emph{Stationarity of fidelity.}  Effect 2 is a consequence of $F$ being
+stationary in every direction but one; this is the elementary geometry
+underlying the quantum control landscape literature, where the fidelity's
+critical structure as a function of the evolution is analyzed in
+detail~\cite{Rabitz2004}.
+
+\emph{Character of the RWA error.}  That the leading counter-rotating effect
+is a coherent, largely calibratable phase shift goes back to Bloch and
+Siegert~\cite{BlochSiegert1940}; modern treatments include the exact rotating
+frame construction of Zeuch et al.~\cite{Zeuch2020} and recent gate-focused
+analyses that compute counter-rotating contributions to infidelity
+perturbatively and cancel them with pulse corrections or phase
+calibration~\cite{Rower2024, Fluxonium2025}.  Those works are consistent with
+Table~\ref{tab:decomposition}: the RWA error is dominated by phase
+accumulation, which gate fidelity largely forgives.
+
+\begin{thebibliography}{9}
+
+\bibitem{Sanders2016}
+Y.~R. Sanders, J.~J. Wallman, and B.~C. Sanders,
+\emph{Bounding quantum gate error rate based on reported average fidelity},
+New J. Phys. \textbf{18}, 012002 (2016), arXiv:1501.04932.
+
+\bibitem{Kueng2016}
+R.~Kueng, D.~M. Long, A.~C. Doherty, and S.~T. Flammia,
+\emph{Comparing experiments to the fault-tolerance threshold},
+Phys. Rev. Lett. \textbf{117}, 170502 (2016), arXiv:1510.05653.
+
+\bibitem{Wallman2016}
+J.~J. Wallman,
+\emph{Bounding experimental quantum error rates relative to fault-tolerant
+thresholds}, arXiv:1511.00727 (2016).
+
+\bibitem{Rabitz2004}
+H.~Rabitz, M.~Hsieh, and C.~Rosenthal,
+\emph{Quantum optimally controlled transition landscapes},
+Science \textbf{303}, 1998 (2004).
+
+\bibitem{BlochSiegert1940}
+F.~Bloch and A.~Siegert,
+\emph{Magnetic resonance for nonrotating fields},
+Phys. Rev. \textbf{57}, 522 (1940).
+
+\bibitem{Zeuch2020}
+D.~Zeuch, F.~Hassler, J.~J. Slim, and D.~P. DiVincenzo,
+\emph{Exact rotating wave approximation},
+Ann. Phys. \textbf{423}, 168327 (2020), arXiv:1807.02858.
+
+\bibitem{Rower2024}
+D.~A. Rower et al.,
+\emph{Suppressing counter-rotating errors for fast single-qubit gates with
+fluxonium}, PRX Quantum \textbf{5}, 040342 (2024).
+
+\bibitem{Fluxonium2025}
+\emph{Single-qubit gates beyond the rotating-wave approximation for strongly
+anharmonic low-frequency qubits}, arXiv:2503.08238 (2025).
+
+\end{thebibliography}
+
+\appendix
+
+\section{Reproducing the numbers}
+
+All quantities in this note come from the cached Vern9 references
+($\code{abstol} = \code{reltol} = 10^{-15}$, basis initial condition,
+$T = 550$, $N_{\mathrm{osc}} = 10$, two guard levels per transmon) via
+\code{vern9\_reference} and \code{cnot3\_gate\_fidelity} in
+\code{src/cnot3\_reference.jl}.  The decomposition of
+Table~\ref{tab:decomposition} projects
+$\delta = U_{\mathrm{norwa}} - U_{\mathrm{rwa}}$ onto the gauge direction
+$\ii U_{\mathrm{rwa}}/\norm{U_{\mathrm{rwa}}}_F$ and the (gauge-orthogonalized)
+radial direction $(U_{\mathrm{rwa}} - e^{\ii\varphi^*}V)/d$, using the real
+inner product $\Re\langle\cdot,\cdot\rangle_F$; the tangential remainder is
+obtained by Pythagoras.
+
+\end{document}

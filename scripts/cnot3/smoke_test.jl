@@ -18,32 +18,40 @@ include(srcdir("error_analysis.jl"))
 include(srcdir("cnot3_run.jl"))
 
 const prefix = "cnot3ConvergenceSmoke"
-const outdir = commit_datadir(prefix)
+const outdir = datadir(prefix)
 
 # Reduced problem: small Hilbert space, short pulse window, few steps/saves.
 nOscLevels = 3
 nGuardLevels = 1
 Tmax = 50.0
-refinementFactor = 2
 nsaves = 4
+nRuns = 2          # exercise the timing-average path
+gmresAtol = 1e-13
+gmresRtol = 1e-13
 
 configs = NamedTuple[]
+# Exercise both save modes: rwa keeps the full save grid (saveFinalOnly = false,
+# the default) so the l2-error / plotting path runs; the other frames below use
+# saveFinalOnly = true.
 for initialCondition in ("basis", "uniform")
-    for method in (:hermite, :filon, :controlled_filon)
+    for method in (:NaiveHermite, :Hermite, :NaiveFilon, :Filon,
+                   :NaiveControlledFilon, :ControlledFilon)
         for s in (0, 1), e in 4:6
             push!(configs, (;
                 method, frame = "rwa", s, Tmax, initialCondition, nOscLevels,
-                nGuardLevels, nsaves, refinementFactor, nsteps = 2^e,
+                nGuardLevels, nsaves, saveFinalOnly = false, nRuns,
+                gmresAtol, gmresRtol, nsteps = 2^e,
             ))
         end
     end
 end
-# The other frames, exercised on a smaller slice of the sweep.
+# The other frames, exercised on a smaller slice of the sweep (final-only).
 for frame in ("norwa", "lab")
-    for method in (:hermite, :filon, :controlled_filon), e in 4:6
+    for method in (:Hermite, :Filon, :ControlledFilon), e in 4:6
         push!(configs, (;
             method, frame, s = 0, Tmax, initialCondition = "uniform", nOscLevels,
-            nGuardLevels, nsaves, refinementFactor, nsteps = 2^e,
+            nGuardLevels, nsaves, saveFinalOnly = true, nRuns,
+            gmresAtol, gmresRtol, nsteps = 2^e,
         ))
     end
 end
@@ -59,6 +67,13 @@ println("Re-running to confirm caching (should be instant) ...")
 t_rerun = @elapsed foreach(
     c -> process_convergence_config(run_simulation, c, prefix, outdir), configs)
 @printf("Re-run of %d configs took %.3f s (cache hits).\n", length(configs), t_rerun)
+
+# The plotting script only loads the Vern9 reference, so precompute it for the
+# frame/init it will plot (its defaults: rwa / basis) at the smoke problem size.
+println("\nComputing the Vern9 reference for the smoke problem ...")
+include(srcdir("cnot3_reference.jl"))
+vern9_reference(; frame = "rwa", initialCondition = "basis",
+                Nosc = nOscLevels, Nguard = nGuardLevels, Tmax = Tmax, nsaves = nsaves)
 
 # Drive the plotting script against the smoke data.
 println("\nRunning the plotting script on the smoke data ...")

@@ -4,8 +4,9 @@
 #
 # Reads the per-run result files written by `cnot3_convergence_collect_data.jl`,
 # gathers them into a DataFrame with `collect_results`, computes each run's error
-# against the *finest run* (treated as the reference / ground truth), then plots
-# a rabi-style log-log convergence figure (and a wall-clock-time figure).
+# against the Vern9 reference solution (an independent, high-accuracy integration
+# of the same dynamics; see `cnot3_reference.jl`), then plots a rabi-style log-log
+# convergence figure (and a wall-clock-time figure).
 #
 # Data collection and plotting are deliberately separate: everything below works
 # off the DataFrame, so filtering ("ignore errors above X", "only these nsteps
@@ -23,33 +24,37 @@ using LinearAlgebra
 using Printf
 using CairoMakie
 
-include(srcdir("error_analysis.jl"))   # l2_integral_error_subsample
+# Lightweight: this only reads jld2 (run histories + the cached reference) — it
+# does not pull in the ODE solver / problem builders.  The reference must already
+# be collected (see cnot3_collect_reference.jl).
+include(srcdir("error_analysis.jl"))   # l2_integral_error_subsample, load_vern9_reference, reference_errors
 
 CairoMakie.set_theme!(CairoMakie.theme_latexfonts())
 const inch = 96
 
 const prefix = get(ENV, "CNOT3_PREFIX", "cnot3Convergence")
-# Plot the current commit's data by default; override with CNOT3_COMMIT to plot
-# a specific past collection (the subdirectory name under datadir(prefix)).
-const commit = get(ENV, "CNOT3_COMMIT", gitdescribe(projectdir()))
-const datapath = datadir(prefix, commit)
-# Each initial condition has its own row count and its own finest-run reference,
-# so we plot one at a time.  Override with CNOT3_INIT (e.g. "uniform").
+const datapath = datadir(prefix)
+# Each initial condition has its own Vern9 reference and row count, so we plot one
+# at a time.  Override with CNOT3_INIT ("basis" or "uniform").
 const init = get(ENV, "CNOT3_INIT", "basis")
 # Solutions differ across frames, so each frame likewise gets its own reference
 # and its own figure.  Override with CNOT3_FRAME ("rwa", "norwa", or "lab").
 const frame = get(ENV, "CNOT3_FRAME", "rwa")
 
-# Display order / labels / styling for the methods.
-const METHOD_ORDER  = (:hermite, :filon, :controlled_filon, :controlled_hermite)
+# Display order / labels / styling for the methods (the three efficient solvers).
+# "Hermite" is the controlled-Hermite (the ω = 0 Filon).  Any `Naive*` runs in the
+# data are simply not listed here, so they are ignored.  Colours match the paper
+# figure (cnot3_convergence_paper.jl).
+const METHOD_ORDER  = (:Filon, :ControlledFilon, :Hermite)
 const METHOD_LABELS = Dict(
-    :hermite            => "Hermite (QGD)",
-    :filon              => "Filon",
-    :controlled_filon   => "Controlled-Filon",
-    :controlled_hermite => "Controlled-Hermite",
+    :Filon           => "Filon",
+    :ControlledFilon => "Controlled-Filon",
+    :Hermite         => "Hermite",
 )
 const SVALS         = (0, 1, 2)
-const METHOD_COLORS = Dict(m => c for (m, c) in zip(METHOD_ORDER, Makie.wong_colors()))
+const METHOD_COLORS = Dict(:Filon           => Makie.wong_colors()[1],
+                           :ControlledFilon => Makie.wong_colors()[2],
+                           :Hermite         => Makie.wong_colors()[3])
 const ORDER_MARKERS = (:circle, :rect, :diamond)
 
 # -----------------------------------------------------------------------------
@@ -60,7 +65,7 @@ const ORDER_MARKERS = (:circle, :rect, :diamond)
 const ERROR_WINDOW = (1e-13, 1e1)
 # Optionally restrict the timestep range, globally or per method.  `nothing`
 # means "no restriction".
-const NSTEPS_WINDOW = Dict{Symbol,Any}()   # e.g. :filon => (2^4, 2^14)
+const NSTEPS_WINDOW = Dict{Symbol,Any}()   # e.g. :Filon => (2^4, 2^14)
 
 # -----------------------------------------------------------------------------
 # Load + derive errors
@@ -77,22 +82,25 @@ isempty(df) && error("No runs with frame=$(frame) (initialCondition=$(init)) in 
 df.method = Symbol.(df.method)
 println("initialCondition = $(init), frame = $(frame)")
 println("Loaded $(nrow(df)) runs: ",
-        join(["$(METHOD_LABELS[m])×$(count(==(m), df.method))" for m in unique(df.method)], ", "))
+        join(["$(get(METHOD_LABELS, m, m))×$(count(==(m), df.method))" for m in unique(df.method)], ", "))
 
-# Finest-run reference: the deepest run of the *highest order* present (order
-# first, then nsteps).  Ranking by nsteps alone can select a low-order run —
-# e.g. an order-2 series pushed to 2^24 — whose own error is many digits above
-# the high-order floors it would be measuring.
-sort!(df, [:s, :nsteps], rev = true)
-ref = first(df)
-Tmax = ref.Tmax
-uref = ref.history[:, end]
-href = ref.history
-@printf("Reference (finest run): method=%s  s=%d  nsteps=%d\n",
-        METHOD_LABELS[ref.method], ref.s, ref.nsteps)
+# Vern9 reference: an independent, high-accuracy integration of this frame's own
+# dynamics (cached; see cnot3_reference.jl).  Every run's error is measured
+# against it, so the convergence floors reflect true accuracy rather than the
+# accuracy of whichever run happens to be finest.
+const NOSC   = first(df).nOscLevels
+const NGUARD = first(df).nGuardLevels
+Tmax         = first(df).Tmax
+const NSAVES = first(df).nsaves
+ref = load_vern9_reference(; frame, initialCondition = init,
+                           Nosc = NOSC, Nguard = NGUARD, Tmax, nsaves = NSAVES)
+println("Reference: Vern9 (abstol=reltol=1e-15), frame=$frame, init=$init")
 
-df.final_error = [norm(h[:, end] .- uref) for h in df.history]
-df.l2_error    = [l2_integral_error_subsample(h, href, Tmax) for h in df.history]
+# l2_error is `missing` for final-only runs (single-column history); the plotted
+# metric is final_error, so that is fine.
+errs = [reference_errors(h, ref, Tmax) for h in df.history]
+df.final_error = [e.final_error for e in errs]
+df.l2_error    = [e.l2_error for e in errs]
 
 # Which error column to plot.
 const ERROR_COL = :final_error
@@ -126,10 +134,10 @@ Combined log-log convergence panel: colour = method, marker = order s, with
 dotted-grey O(Δtᵖ) guide lines anchored to the first available curve of each
 order.  Saves png/svg/pdf to `plotsdir("cnot3")`.
 """
-function make_convergence_figure(df, methods; basename = "cnot3_convergence_$(frame)")
+function make_convergence_figure(df, methods; basename = "cnot3_convergence_$(frame)_$(init)")
     fig = Figure(size = (7.5inch, 4.6inch), fontsize = 11)
     Label(fig[0, 1:2],
-          L"\textrm{CNOT3\;gate\;convergence}\;\;(N_{\mathrm{osc}}=%$(ref.nOscLevels),\;T=%$(Tmax),\;\textrm{%$(frame)\;frame})";
+          L"\textrm{CNOT3\;gate\;convergence}\;\;(N_{\mathrm{osc}}=%$(NOSC),\;T=%$(Tmax),\;\textrm{%$(frame)\;frame})";
           fontsize = 13, padding = (0, 0, 6, 0))
     ax = Axis(fig[1, 1];
               xlabel = "Number of timesteps", ylabel = "Final-time 2-norm error",
@@ -195,7 +203,7 @@ function make_convergence_figure(df, methods; basename = "cnot3_convergence_$(fr
 end
 
 "Wall-clock time vs nsteps (log-log), same colour/marker scheme."
-function make_timing_figure(df, methods; basename = "cnot3_timing_$(frame)")
+function make_timing_figure(df, methods; basename = "cnot3_timing_$(frame)_$(init)")
     fig = Figure(size = (7.5inch, 4.6inch), fontsize = 11)
     Label(fig[0, 1:2], L"\textrm{CNOT3\;wall-clock\;time}\;\;(\textrm{%$(frame)\;frame})";
           fontsize = 13, padding = (0, 0, 6, 0))
@@ -228,10 +236,10 @@ end
 Convergence panel against the time step Δt = Tmax/nsteps (instead of nsteps):
 error decreases as Δt → 0 (curves descend to the left), with O(Δtᵖ) guides.
 """
-function make_stepsize_figure(df, methods; basename = "cnot3_stepsize_$(frame)")
+function make_stepsize_figure(df, methods; basename = "cnot3_stepsize_$(frame)_$(init)")
     fig = Figure(size = (7.5inch, 4.6inch), fontsize = 11)
     Label(fig[0, 1:2],
-          L"\textrm{CNOT3\;gate\;convergence}\;\;(N_{\mathrm{osc}}=%$(ref.nOscLevels),\;T=%$(Tmax),\;\textrm{%$(frame)\;frame})";
+          L"\textrm{CNOT3\;gate\;convergence}\;\;(N_{\mathrm{osc}}=%$(NOSC),\;T=%$(Tmax),\;\textrm{%$(frame)\;frame})";
           fontsize = 13, padding = (0, 0, 6, 0))
     ax = Axis(fig[1, 1];
               xlabel = L"Time step $\Delta t$", ylabel = "Final-time 2-norm error",
@@ -291,7 +299,7 @@ Work–precision (efficiency) diagram: final-time error vs wall-clock solve time
 log-log.  Down-and-to-the-left is better (accurate AND cheap); the leftmost
 curve at a given error level is the most efficient method.
 """
-function make_workprecision_figure(df, methods; basename = "cnot3_workprecision_$(frame)")
+function make_workprecision_figure(df, methods; basename = "cnot3_workprecision_$(frame)_$(init)")
     fig = Figure(size = (7.5inch, 4.6inch), fontsize = 11)
     Label(fig[0, 1:2],
           L"\textrm{CNOT3\;work-precision}\;\;(\textrm{%$(frame)\;frame})";
@@ -340,9 +348,9 @@ solve works: flat and small in the rotating frames, but pinned at the iteration
 cap in the lab-frame coarse-step blowup region and only dropping to a few once
 Δt is fine enough to make each step's system well-conditioned.
 """
-function make_gmres_figure(df, methods; basename = "cnot3_gmres_$(frame)")
-    iter_methods = [m for m in methods if m != :hermite]
-    "avg_gmres" in names(df) || (println("  (no avg_gmres column; skipping GMRES figure)"); return nothing)
+function make_gmres_figure(df, methods; basename = "cnot3_gmres_$(frame)_$(init)")
+    iter_methods = methods   # every method here is a GMRES solver
+    "gmres_mean" in names(df) || (println("  (no gmres_mean column; skipping GMRES figure)"); return nothing)
     fig = Figure(size = (7.5inch, 4.6inch), fontsize = 11)
     Label(fig[0, 1:2], L"\textrm{CNOT3\;GMRES\;iterations\;per\;step}\;\;(\textrm{%$(frame)\;frame})";
           fontsize = 13, padding = (0, 0, 6, 0))
@@ -350,10 +358,10 @@ function make_gmres_figure(df, methods; basename = "cnot3_gmres_$(frame)")
               ylabel = "Mean GMRES iterations / step", xscale = log10, yscale = log10)
     for m in iter_methods, (si, s) in enumerate(SVALS)
         sub = df[(df.method .== m) .& (df.s .== s), :]
-        sub = sub[.!ismissing.(sub.avg_gmres), :]
+        sub = sub[.!ismissing.(sub.gmres_mean), :]
         isempty(sub) && continue
         sort!(sub, :nsteps)
-        scatterlines!(ax, Vector{Float64}(sub.nsteps), Vector{Float64}(sub.avg_gmres);
+        scatterlines!(ax, Vector{Float64}(sub.nsteps), Vector{Float64}(sub.gmres_mean);
                       color = METHOD_COLORS[m], marker = ORDER_MARKERS[si],
                       markersize = 9, linewidth = 1.5)
     end
@@ -373,10 +381,7 @@ function make_gmres_figure(df, methods; basename = "cnot3_gmres_$(frame)")
 end
 
 methods_present = [m for m in METHOD_ORDER if m in df.method]
-# The convergence panel shows only the three primary competitors; the other
-# figures keep the full method set.
-conv_methods = [m for m in methods_present if m != :controlled_hermite]
-fig_conv = make_convergence_figure(df, conv_methods)
+fig_conv = make_convergence_figure(df, methods_present)
 fig_time = make_timing_figure(df, methods_present)
 fig_dt   = make_stepsize_figure(df, methods_present)
 fig_wp   = make_workprecision_figure(df, methods_present)
