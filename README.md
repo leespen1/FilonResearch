@@ -120,8 +120,8 @@ missing.
 
    The paper's sweep uses `Tmax = 550`, `nsaves = 16`, GMRES tolerances
    `1e-15`, frames `rwa` and `lab` (`norwa` is supported but not part of
-   the final data), both initial conditions, and consecutive power-of-two
-   step counts. The collected ranges, as exponents e in `nsteps = 2^e`
+   the final data), both initial conditions (though only `basis` appears
+   in the paper), and consecutive power-of-two step counts. The collected ranges, as exponents `n` in `nsteps = 2^n`
    (where `basis` / `uniform` differ, both are given):
 
    | frame | s | ControlledFilon | Filon | Hermite | HermiteQGD |
@@ -158,7 +158,9 @@ missing.
 
    The scripts are configured by environment variables; **the paper's
    figures and tables use the default for every one of them**, so the
-   plain commands above reproduce the paper exactly.
+   plain commands above reproduce the paper exactly. Note that the
+   defaults produce outputs for both initial conditions, but the paper
+   includes only the `basis` ones; the `uniform` outputs go unused.
 
    Shared by all three CNOT3 scripts (via `src/cnot3_paper_common.jl`):
 
@@ -192,7 +194,7 @@ For a quick end-to-end check of the CNOT3 pipeline on a reduced problem, run
 julia --project=. scripts/stability/astability_symbolic.jl
 ```
 
-Verifies, with SymPy, every algebraic identity used in the paper's
+Verifies, with SymPy, the algebraic identities used in the paper's
 A-stability proof for `s = 1`: the quadrature weights derived from the cubic
 Hermite cardinals, their real/imaginary decompositions, the collapse of the
 first stability condition to `12 φ^8 ≥ 0`, and the perfect-square
