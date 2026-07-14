@@ -38,6 +38,9 @@ CairoMakie.set_theme!(CairoMakie.theme_latexfonts())
 const METHODS = (:Filon, :ControlledFilon, :Hermite)   # display / legend order
 const METHOD_LABELS = Dict(:Filon => "Filon", :ControlledFilon => "Controlled Filon",
                            :Hermite => "Hermite")
+# Compact variant for narrow legends (e.g. the vertical right-side GMRES legend).
+const METHOD_LABELS_SHORT = Dict(:Filon => "Filon", :ControlledFilon => "C-Filon",
+                                 :Hermite => "Hermite")
 const METHOD_COLOR = Dict(:Filon           => Makie.wong_colors()[1],   # blue
                           :ControlledFilon => Makie.wong_colors()[2],   # orange
                           :Hermite         => Makie.wong_colors()[3])   # green
@@ -68,7 +71,8 @@ end
 
 # Method/order legend (+ optional extra group); concrete Vectors, never Vector{Any}
 # (a Vector{Any} trips a Makie/ComputePipeline text-rendering bug at save time).
-function method_order_legend(legend_extra; order_asymptotic = true)
+function method_order_legend(legend_extra; order_asymptotic = true,
+                             method_labels = METHOD_LABELS)
     method_entries = [LineElement(color = METHOD_COLOR[m], linestyle = METHOD_LS[m], linewidth = 2)
                       for m in METHODS]
     order_entries  = [MarkerElement(marker = ORDER_MARKERS[si], color = :black, markersize = 8)
@@ -78,7 +82,7 @@ function method_order_legend(legend_extra; order_asymptotic = true)
     order_labels = order_asymptotic ?
         [L"s=%$(s)\;(\mathcal{O}(\Delta t^{%$(2(s+1))}))" for s in SVALS] :
         [L"s=%$(s)" for s in SVALS]
-    method_labs = [METHOD_LABELS[m] for m in METHODS]
+    method_labs = [method_labels[m] for m in METHODS]
     legend_extra === nothing &&
         return ([method_entries, order_entries], [method_labs, order_labels], ["Method", "Order"])
     return ([method_entries, order_entries, legend_extra[1]],
@@ -111,11 +115,15 @@ function paper_2panel(df_lab, df_rwa, draw_panel!; title, xlabel, ylabel,
                       xlims = (nothing, nothing),
                       ylims = (nothing, nothing), ylims_rwa = nothing,
                       link_yaxis = true, yminor = false,
-                      legend = true, legend_extra = nothing,
+                      legend = true, legend_extra = nothing, legend_position = :bottom,
                       order_asymptotic = true, basename)
+    right_legend = legend && legend_position == :right
     W = PAPER_WIDTH_IN * PAPER_PT_PER_IN
-    fig = Figure(size = (W, legend ? 216 : 178), fontsize = 8, figure_padding = (2, 3, 2, 2))
-    Label(fig[1, 1:2], title; fontsize = 10, font = :bold)
+    # A right-side legend sits beside the panels, so no extra bottom row is needed.
+    fig = Figure(size = (W, (legend && !right_legend) ? 216 : 178),
+                 fontsize = 8, figure_padding = (2, 3, 2, 2))
+    title_span = right_legend ? (1:3) : (1:2)
+    Label(fig[1, title_span], title; fontsize = 10, font = :bold)
 
     # The rwa panel may carry its own y-range (only meaningful when y is unshared).
     rwa_ylims = ylims_rwa === nothing ? ylims : ylims_rwa
@@ -132,7 +140,14 @@ function paper_2panel(df_lab, df_rwa, draw_panel!; title, xlabel, ylabel,
     # its own y tick labels so each side can be read directly.
     link_yaxis ? linkaxes!(ax_lab, ax_rwa) : linkxaxes!(ax_lab, ax_rwa)
 
-    if legend
+    if right_legend
+        groups, labs, titls = method_order_legend(legend_extra; order_asymptotic,
+                                                  method_labels = METHOD_LABELS_SHORT)
+        Legend(fig[2, 3], groups, labs, titls;
+               orientation = :vertical, framevisible = true, titleposition = :top,
+               patchsize = (14f0, 8f0), rowgap = 2, titlegap = 3,
+               labelsize = 7, titlesize = 7, padding = (4f0, 4f0, 3f0, 3f0))
+    elseif legend
         groups, labs, titls = method_order_legend(legend_extra; order_asymptotic)
         Legend(fig[3, 1:2], groups, labs, titls;
                orientation = :horizontal, framevisible = true, titleposition = :left,
@@ -140,8 +155,9 @@ function paper_2panel(df_lab, df_rwa, draw_panel!; title, xlabel, ylabel,
                labelsize = 7, titlesize = 7, padding = (4f0, 4f0, 3f0, 3f0))
     end
     rowgap!(fig.layout, 1, 1)
-    legend && rowgap!(fig.layout, 2, 4)
+    legend && !right_legend && rowgap!(fig.layout, 2, 4)
     colgap!(fig.layout, 1, 6)
+    right_legend && colgap!(fig.layout, 2, 6)
 
     save_figure(fig, basename)
     return fig
@@ -221,7 +237,7 @@ function figures_for(df_all, init)
     df_lab = frame_df(df_all, "lab", init)
     df_rwa = frame_df(df_all, "rwa", init)
     rwa_error = norm(uref_of("rwa", init) .- uref_of("norwa", init))
-    icl = ic_label(init)
+    icl = ic_title_suffix(init)
     println("  init=$init: RWA modeling error = ", round(rwa_error; sigdigits = 4))
 
     vof(col) = sub -> Vector{Float64}(sub[!, col])
@@ -240,8 +256,8 @@ function figures_for(df_all, init)
         draw_series!(ax, df, dtof, vof(:final_error); keepfn = (d, e) -> in_window(e))
     end
     paper_2panel(df_lab, df_rwa, conv!;
-        title = "CNOT Gate Convergence ($icl)", xlabel = L"\Delta t",
-        ylabel = "Final Time Error", xlims = conv_xlims, ylims = (1e-8, 1e0),
+        title = "CNOT Gate Convergence$icl", xlabel = L"\Delta t",
+        ylabel = "Final-Time Error", xlims = conv_xlims, ylims = (1e-8, 1e0),
         xticks = (10.0 .^ xpows, [L"10^{%$p}" for p in xpows]),
         yticks = (10.0 .^ ypows, [L"10^{%$p}" for p in ypows]),
         legend = SHOW_LEGEND, legend_extra = FIREBRICK_LEGEND,
@@ -249,7 +265,7 @@ function figures_for(df_all, init)
 
     # 2. Work-precision: final-time error vs elapsed time (lines in nsteps order).
     # The lab and rwa elapsed-time ranges differ, so each frame keeps its own
-    # y-axis, with limits chosen per IC; only the Final Time Error x-axis is shared.
+    # y-axis, with limits chosen per IC; only the Final-Time Error x-axis is shared.
     wp_ylims_lab, wp_ylims_rwa = init == "basis"   ? ((1e2, 1e4), (1e0, 1e3)) :
                                  init == "uniform"  ? ((1e1, 1e4), (10.0^-0.5, 1e3)) :
                                  ((nothing, nothing), (nothing, nothing))
@@ -261,7 +277,7 @@ function figures_for(df_all, init)
         draw_series!(ax, df, vof(:final_error), vof(:t_elapsed); keepfn = (e, t) -> in_window(e))
     end
     paper_2panel(df_lab, df_rwa, wp!;
-        title = "CNOT Work–Precision ($icl)", xlabel = "Final Time Error",
+        title = "CNOT Work–Precision$icl", xlabel = "Final-Time Error",
         ylabel = "Time to Compute (s)", xlims = (1e-8, 1e0), yticks = wp_yticks,
         ylims = wp_ylims_lab, ylims_rwa = wp_ylims_rwa, link_yaxis = false, yminor = true,
         legend = SHOW_LEGEND, legend_extra = FIREBRICK_LEGEND,
@@ -269,23 +285,23 @@ function figures_for(df_all, init)
 
     # 2b. Combined: convergence (top) over work-precision (bottom), one shared legend.
     decade_ticks = (10.0 .^ xpows, [L"10^{%$p}" for p in xpows])
-    conv_spec = (draw! = conv!, xlabel = L"\Delta t", ylabel = "Final Time Error",
+    conv_spec = (draw! = conv!, xlabel = L"\Delta t", ylabel = "Final-Time Error",
                  xlims = conv_xlims, ylims = (1e-8, 1e0),
                  xticks = decade_ticks, yticks = decade_ticks)
-    wp_spec = (draw! = wp!, xlabel = "Final Time Error", ylabel = "Time to Compute (s)",
+    wp_spec = (draw! = wp!, xlabel = "Final-Time Error", ylabel = "Time to Compute (s)",
                xlims = (1e-8, 1e0), ylims = wp_ylims_lab, ylims_rwa = wp_ylims_rwa,
                xticks = decade_ticks, yticks = wp_yticks)
     paper_4panel(df_lab, df_rwa, conv_spec, wp_spec;
-        title = "CNOT Convergence & Work–Precision ($icl)",
+        title = "CNOT Convergence & Work–Precision$icl",
         legend = SHOW_LEGEND, legend_extra = FIREBRICK_LEGEND,
         basename = "cnot3_convergence_workprecision_labrwa_$(init)")
 
     # 3. GMRES iterations: Δt vs mean GMRES iterations per step.
     gm!(ax, df) = draw_series!(ax, df, dtof, sub -> Vector{Float64}(coalesce.(sub.gmres_mean, NaN)))
     paper_2panel(df_lab, df_rwa, gm!;
-        title = "CNOT GMRES Iterations ($icl)", xlabel = L"\Delta t",
+        title = "CNOT GMRES Iterations$icl", xlabel = L"\Delta t",
         ylabel = "Mean GMRES Iterations / Step", legend = SHOW_LEGEND,
-        order_asymptotic = false,
+        legend_position = :right, order_asymptotic = false,
         basename = "cnot3_gmres_labrwa_$(init)")
 end
 

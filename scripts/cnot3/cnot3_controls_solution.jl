@@ -195,7 +195,7 @@ function make_figure(; basename = "cnot3_controls_solution")
     lab_xt = (xticks = [50.0, 50.25, 50.5],
               xminorticksvisible = true, xminorticks = Makie.IntervalsBetween(5))
     rwa_xt = (xticks = collect(TSTART:5.0:TSTOP),)
-    ctrl_ylabel = L"\textrm{Control\;Pulse}\;(\textrm{MHz}/2\pi)"
+    ctrl_ylabel = L"\textrm{Pulse\;Amplitude}\;(\textrm{MHz}/2\pi)"
 
     # Row 2: probability amplitudes (imaginary part), lab (left) and rotating (right).
     axA_lab = Axis(fig[2, 1]; title = "Lab Frame", ylabel = "Im. Probability Amplitude",
