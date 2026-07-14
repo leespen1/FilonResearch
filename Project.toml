@@ -21,7 +21,7 @@ Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 [sources]
 ControlledOperators = {path = "lib/ControlledOperators"}
 FilonResearch = {path = "lib/FilonResearch"}
-QuantumGateDesign = {url = "https://github.com/leespen1/QuantumGateDesign.jl.git"}
+QuantumGateDesign = {rev = "f2dd2978ff4a90988b0dc2b7fbfff5ec46dee5df", url = "https://github.com/leespen1/QuantumGateDesign.jl.git"}
 
 [compat]
 DataFrames = "1.8"
