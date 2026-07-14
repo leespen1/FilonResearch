@@ -13,8 +13,6 @@ end
     include("./test_manufactured_polynomial_solution.jl")
 end
 
-# NOTE: test_hardcoded_lhs_rhs.jl targeted the removed src/hardcoded_lhs_rhs.jl
-# (replaced by the ControlledOperator-based hard-coded Filon method below).
 @testset "Hard-coded Filon (ControlledOperator)" begin
     include("./test_hardcoded_filon.jl")
 end
