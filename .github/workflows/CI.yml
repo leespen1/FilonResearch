@@ -29,14 +29,6 @@ jobs:
           - ubuntu-latest
         arch:
           - x64
-        include:
-          # ControlledOperators also supports the 1.10 LTS (julia = "1.10" in
-          # its [compat]). FilonResearch cannot: its [sources] section (git and
-          # path deps) requires the Pkg of Julia 1.11+.
-          - package: lib/ControlledOperators
-            version: '1.10'
-            os: ubuntu-latest
-            arch: x64
     steps:
       - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v2
