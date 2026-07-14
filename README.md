@@ -127,6 +127,19 @@ missing.
 For a quick end-to-end check of the CNOT3 pipeline on a reduced problem, run
 `julia --project=. scripts/cnot3/smoke_test.jl`.
 
+### A-stability identities (symbolic check, under a minute)
+
+```bash
+julia --project=. scripts/stability/astability_symbolic.jl
+```
+
+Verifies, with SymPy, every algebraic identity used in the paper's
+A-stability proof for `s = 1`: the quadrature weights derived from the cubic
+Hermite cardinals, their real/imaginary decompositions, the collapse of the
+first stability condition to `12 φ^8 ≥ 0`, and the perfect-square
+factorization of the second. Each check prints `[OK]` when the corresponding
+expression simplifies to exactly zero.
+
 ### Precollected data
 
 Because the full CNOT3 sweep is expensive, the collected data (references
