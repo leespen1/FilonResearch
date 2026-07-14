@@ -19,8 +19,7 @@
 # The companion speedup/Δt tables are produced by cnot3_tables_paper.jl, which
 # shares src/cnot3_paper_common.jl but does not load Makie.
 #
-# Figures are written to the DrWatson plots dir, and (only if the Overleaf dir
-# exists) copied into FilonProjectOverleaf: PDFs to Figures/, PNGs to FiguresPNG/.
+# Figures are written to the DrWatson plots dir (PDF and PNG).
 #
 # Run:  julia --project=. scripts/cnot3/cnot3_convergence_paper.jl
 #       (CNOT3_INIT=basis to restrict to one initial condition)
@@ -90,21 +89,13 @@ function method_order_legend(legend_extra; order_asymptotic = true,
             ["Method", "Order", legend_extra[3]])
 end
 
-# Write fig to the DrWatson plots dir and (if it exists) the Overleaf dir:
-# PDFs to Figures/, PNGs to FiguresPNG/.
+# Write fig (PDF and PNG) to the DrWatson plots dir.
 function save_figure(fig, basename)
-    overleaf = normpath(projectdir("..", "FilonProjectOverleaf"))
-    isdir(overleaf) || @warn "paper repo not found; figure saved to plots/ only" overleaf maxlog=1
-    overleaf_subdir = Dict("pdf" => "Figures", "png" => "FiguresPNG")
     for (ext, unit) in (("pdf", 1), ("png", 3))
-        fname = "$(basename).$(ext)"
-        dests = [plotsdir("cnot3", fname)]
-        isdir(overleaf) && push!(dests, joinpath(overleaf, overleaf_subdir[ext], fname))
-        for p in dests
-            mkpath(dirname(p))
-            ext == "pdf" ? save(p, fig; pt_per_unit = unit) : save(p, fig; px_per_unit = unit)
-            println("  saved → ", p)
-        end
+        p = plotsdir("cnot3", "$(basename).$(ext)")
+        mkpath(dirname(p))
+        ext == "pdf" ? save(p, fig; pt_per_unit = unit) : save(p, fig; px_per_unit = unit)
+        println("  saved → ", p)
     end
 end
 

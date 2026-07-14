@@ -170,8 +170,8 @@ end
 # Sized for the SIAM single-column paper: \linewidth = \textwidth = 5.125 in.  CairoMakie's
 # vector (PDF) unit is 1 pt = 1/72 in, so the figure is built directly in points and saved
 # as a PDF at exactly \linewidth, with paper-scale fonts — placed at width=\linewidth it
-# needs no rescaling.  The PDF goes to the Overleaf Figures/ dir (fig:rabi-filon-intro);
-# a PNG preview goes to the DrWatson plots dir.
+# needs no rescaling.  The PDF (used by the paper as fig:rabi-filon-intro) and a PNG
+# preview go to the DrWatson plots dir.
 const PAPER_PT_PER_IN = 72
 const PAPER_WIDTH_IN  = 5.125
 
@@ -303,17 +303,9 @@ print_convergence("Lab frame", errors_lab)
 print_convergence("Rotating frame (RWA)", errors_rwa)
 pdf_name = savename("rabi_convergence", config, "pdf")
 png_name = savename("rabi_convergence", config, "png")
-pdf_paths = [plotsdir("rabi_oscillator", pdf_name)]
-png_paths = [plotsdir("rabi_oscillator", png_name)]
-overleaf = normpath(projectdir("..", "FilonProjectOverleaf"))
-if isdir(overleaf)
-    push!(pdf_paths, joinpath(overleaf, "Figures", pdf_name))
-    push!(png_paths, joinpath(overleaf, "FiguresPNG", png_name))
-else
-    @warn "paper repo not found; figure saved to plots/ only" overleaf
-end
 make_combined_figure(nsteps_list, errors_lab, errors_rwa, rwa_error, T;
-                     pdf_paths, png_paths)
+                     pdf_paths = [plotsdir("rabi_oscillator", pdf_name)],
+                     png_paths = [plotsdir("rabi_oscillator", png_name)])
 
 # =============================================================================
 # Step-size tables (mirroring the CNOT3 tables in scripts/cnot3/cnot3_tables_paper.jl)
@@ -406,7 +398,7 @@ function block_rows(errors, frame, kind)
 end
 
 # Write one booktabs tabular (no surrounding table environment; the paper controls
-# placement/caption/label) to the plots dir and, if present, the Overleaf Tables/.
+# placement/caption/label) to the plots dir.
 function save_rabi_table(basename, title, caption, blocks)
     ncols = 2 + length(TABLE_TARGETS)
     header = "Method & \$s\$ & " *
@@ -433,15 +425,10 @@ function save_rabi_table(basename, title, caption, blocks)
         end
     end
     append!(lines, ["    \\bottomrule", "\\end{tabular}", ""])
-    dests = [plotsdir("rabi_oscillator", "$basename.tex")]
-    overleaf = normpath(projectdir("..", "FilonProjectOverleaf"))
-    isdir(overleaf) || @warn "paper repo not found; table saved to plots/ only" overleaf maxlog=1
-    isdir(overleaf) && push!(dests, joinpath(overleaf, "Tables", "$basename.tex"))
-    for p in dests
-        mkpath(dirname(p))
-        write(p, join(lines, "\n"))
-        println("  saved → ", p)
-    end
+    p = plotsdir("rabi_oscillator", "$basename.tex")
+    mkpath(dirname(p))
+    write(p, join(lines, "\n"))
+    println("  saved → ", p)
 end
 
 # Aligned stdout rendering of a frame block (the on-screen sanity check).

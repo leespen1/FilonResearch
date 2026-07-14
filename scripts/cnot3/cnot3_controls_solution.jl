@@ -242,20 +242,12 @@ function make_figure(; basename = "cnot3_controls_solution")
     rowgap!(fig.layout, 4)
     rowgap!(fig.layout, 2, 12)   # extra space so amplitude x-ticks clear the legend
 
-    # Save to the DrWatson plots dir, and (only if the Overleaf dir exists) copy
-    # PDFs to Figures/ and PNGs to FiguresPNG/.
-    overleaf = normpath(projectdir("..", "FilonProjectOverleaf"))
-    isdir(overleaf) || @warn "paper repo not found; figure saved to plots/ only" overleaf maxlog=1
-    overleaf_subdir = Dict("pdf" => "Figures", "png" => "FiguresPNG")
+    # Save PDF and PNG to the DrWatson plots dir.
     for (ext, kw) in (("pdf", (; pt_per_unit = 1)), ("png", (; px_per_unit = 3)))
-        fname = "$(basename).$(ext)"
-        dests = [plotsdir("cnot3", fname)]
-        isdir(overleaf) && push!(dests, joinpath(overleaf, overleaf_subdir[ext], fname))
-        for p in dests
-            mkpath(dirname(p))
-            save(p, fig; kw...)
-            println("  saved → ", p)
-        end
+        p = plotsdir("cnot3", "$(basename).$(ext)")
+        mkpath(dirname(p))
+        save(p, fig; kw...)
+        println("  saved → ", p)
     end
     return fig, states, meanpop
 end

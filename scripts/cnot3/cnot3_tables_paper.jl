@@ -20,8 +20,7 @@
 #
 # Shares src/cnot3_paper_common.jl with the figures script
 # (cnot3_convergence_paper.jl) but loads no plotting backend, so table tweaks
-# don't pay the Makie tax.  Tables are written to the DrWatson plots dir and
-# (only if the Overleaf dir exists) copied into FilonProjectOverleaf/Tables/.
+# don't pay the Makie tax.  Tables are written to the DrWatson plots dir.
 #
 # Run:  julia --project=. scripts/cnot3/cnot3_tables_paper.jl
 #       (CNOT3_INIT=basis to restrict to one initial condition)
@@ -134,8 +133,8 @@ function raw_table(reqs; getval)
 end
 
 # Write one booktabs tabular (no surrounding table environment, so the paper
-# controls placement/caption/label) to the plots dir and (if present) Overleaf
-# Tables/.  The title is a \multicolumn row under the toprule, set off from the
+# controls placement/caption/label) to the plots dir.
+# The title is a \multicolumn row under the toprule, set off from the
 # body by a heavy rule; `blocks` is a vector of (block_title, entries) pairs
 # stacked vertically under a shared column header, each introduced by a
 # \multicolumn row in the style of the physical-parameters table in the paper.
@@ -166,15 +165,10 @@ function save_table(basename, title, caption, blocks)
         end
     end
     append!(lines, ["    \\bottomrule", "\\end{tabular}", ""])
-    dests = [plotsdir("cnot3", "$basename.tex")]
-    overleaf = normpath(projectdir("..", "FilonProjectOverleaf"))
-    isdir(overleaf) || @warn "paper repo not found; table saved to plots/ only" overleaf maxlog=1
-    isdir(overleaf) && push!(dests, joinpath(overleaf, "Tables", "$basename.tex"))
-    for p in dests
-        mkpath(dirname(p))
-        write(p, join(lines, "\n"))
-        println("  saved → ", p)
-    end
+    p = plotsdir("cnot3", "$basename.tex")
+    mkpath(dirname(p))
+    write(p, join(lines, "\n"))
+    println("  saved → ", p)
 end
 
 # Aligned stdout rendering of an entry matrix (the on-screen sanity check).
