@@ -93,7 +93,8 @@ end
 # Write fig to the DrWatson plots dir and (if it exists) the Overleaf dir:
 # PDFs to Figures/, PNGs to FiguresPNG/.
 function save_figure(fig, basename)
-    overleaf = projectdir("FilonProjectOverleaf")
+    overleaf = normpath(projectdir("..", "FilonProjectOverleaf"))
+    isdir(overleaf) || @warn "paper repo not found; figure saved to plots/ only" overleaf maxlog=1
     overleaf_subdir = Dict("pdf" => "Figures", "png" => "FiguresPNG")
     for (ext, unit) in (("pdf", 1), ("png", 3))
         fname = "$(basename).$(ext)"

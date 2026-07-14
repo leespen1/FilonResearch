@@ -167,7 +167,8 @@ function save_table(basename, title, caption, blocks)
     end
     append!(lines, ["    \\bottomrule", "\\end{tabular}", ""])
     dests = [plotsdir("cnot3", "$basename.tex")]
-    overleaf = projectdir("FilonProjectOverleaf")
+    overleaf = normpath(projectdir("..", "FilonProjectOverleaf"))
+    isdir(overleaf) || @warn "paper repo not found; table saved to plots/ only" overleaf maxlog=1
     isdir(overleaf) && push!(dests, joinpath(overleaf, "Tables", "$basename.tex"))
     for p in dests
         mkpath(dirname(p))

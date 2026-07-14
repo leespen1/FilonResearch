@@ -303,11 +303,17 @@ print_convergence("Lab frame", errors_lab)
 print_convergence("Rotating frame (RWA)", errors_rwa)
 pdf_name = savename("rabi_convergence", config, "pdf")
 png_name = savename("rabi_convergence", config, "png")
+pdf_paths = [plotsdir("rabi_oscillator", pdf_name)]
+png_paths = [plotsdir("rabi_oscillator", png_name)]
+overleaf = normpath(projectdir("..", "FilonProjectOverleaf"))
+if isdir(overleaf)
+    push!(pdf_paths, joinpath(overleaf, "Figures", pdf_name))
+    push!(png_paths, joinpath(overleaf, "FiguresPNG", png_name))
+else
+    @warn "paper repo not found; figure saved to plots/ only" overleaf
+end
 make_combined_figure(nsteps_list, errors_lab, errors_rwa, rwa_error, T;
-                     pdf_paths = [plotsdir("rabi_oscillator", pdf_name),
-                                  projectdir("FilonProjectOverleaf", "Figures", pdf_name)],
-                     png_paths = [plotsdir("rabi_oscillator", png_name),
-                                  projectdir("FilonProjectOverleaf", "FiguresPNG", png_name)])
+                     pdf_paths, png_paths)
 
 # =============================================================================
 # Step-size tables (mirroring the CNOT3 tables in scripts/cnot3/cnot3_tables_paper.jl)
@@ -428,7 +434,8 @@ function save_rabi_table(basename, title, caption, blocks)
     end
     append!(lines, ["    \\bottomrule", "\\end{tabular}", ""])
     dests = [plotsdir("rabi_oscillator", "$basename.tex")]
-    overleaf = projectdir("FilonProjectOverleaf")
+    overleaf = normpath(projectdir("..", "FilonProjectOverleaf"))
+    isdir(overleaf) || @warn "paper repo not found; table saved to plots/ only" overleaf maxlog=1
     isdir(overleaf) && push!(dests, joinpath(overleaf, "Tables", "$basename.tex"))
     for p in dests
         mkpath(dirname(p))

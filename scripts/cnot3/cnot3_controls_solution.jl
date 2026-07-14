@@ -244,7 +244,8 @@ function make_figure(; basename = "cnot3_controls_solution")
 
     # Save to the DrWatson plots dir, and (only if the Overleaf dir exists) copy
     # PDFs to Figures/ and PNGs to FiguresPNG/.
-    overleaf = projectdir("FilonProjectOverleaf")
+    overleaf = normpath(projectdir("..", "FilonProjectOverleaf"))
+    isdir(overleaf) || @warn "paper repo not found; figure saved to plots/ only" overleaf maxlog=1
     overleaf_subdir = Dict("pdf" => "Figures", "png" => "FiguresPNG")
     for (ext, kw) in (("pdf", (; pt_per_unit = 1)), ("png", (; px_per_unit = 3)))
         fname = "$(basename).$(ext)"

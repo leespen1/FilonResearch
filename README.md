@@ -204,9 +204,11 @@ expression simplifies to exactly zero.
 ### Precollected data
 
 Because the full CNOT3 sweep is expensive, the collected data (references
-and per-run results) will be archived with a DOI so that stage 3 can be run
-directly; unpack the archive into `data/`. *(Link to be added at
-submission.)*
+and per-run results) is archived at
+[doi:10.5281/zenodo.21353409](https://doi.org/10.5281/zenodo.21353409),
+together with `Manifest.toml` snapshots that pin the exact package versions
+used for the paper's results. Unpack the data archive into `data/`; stage 3
+can then be run directly.
 
 ## License
 
