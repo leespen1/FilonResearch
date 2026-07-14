@@ -196,7 +196,7 @@ function make_combined_figure(nsteps_list, errors_lab, errors_rwa, rwa_error, T;
     Label(fig[1, 1:2], "Rabi Oscillator Convergence"; fontsize = 10, font = :bold)
 
     ax_lab = Axis(fig[2, 1]; title = "Lab Frame", xlabel = L"\Delta t",
-                  ylabel = "Final State Error", xscale = log10, yscale = log10,
+                  ylabel = "Final-Time Error", xscale = log10, yscale = log10,
                   yticks = yticks, limits = (nothing, ylims))
     ax_rwa = Axis(fig[2, 2]; title = "RWA Frame", xlabel = L"\Delta t",
                   xscale = log10, yscale = log10, yticks = yticks, limits = (nothing, ylims))
@@ -412,7 +412,7 @@ function save_rabi_table(basename, title, caption, blocks)
         "    \\toprule",
         "    \\multicolumn{$ncols}{c}{$title} \\\\",
         "    \\midrule[\\heavyrulewidth]",
-        "    & & \\multicolumn{$(length(TABLE_TARGETS))}{c}{Target final-time error} \\\\",
+        "    & & \\multicolumn{$(length(TABLE_TARGETS))}{c}{Target Final-Time Error} \\\\",
         "    \\cmidrule(lr){3-$ncols}",
         "    " * header,
     ]

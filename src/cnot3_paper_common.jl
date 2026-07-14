@@ -34,6 +34,13 @@ in_window(e) = (e .>= ERROR_WINDOW[1]) .& (e .<= ERROR_WINDOW[2])
 ic_label(ic) = ic == "basis" ? "Gate Basis IC" :
                ic == "uniform" ? "Uniform IC" : "$(ic) IC"
 
+# Whether figure titles carry the parenthesized initial-condition label, e.g.
+# " (Gate Basis IC)".  Off by default; set CNOT3_IC_LABEL to enable.
+const SHOW_IC_LABEL = haskey(ENV, "CNOT3_IC_LABEL")
+
+# Parenthesized title suffix, or "" when the label is toggled off.
+ic_title_suffix(ic) = SHOW_IC_LABEL ? " ($(ic_label(ic)))" : ""
+
 uref_of(frame, init) = load_vern9_reference(; frame, initialCondition = init, Nosc = NOSC,
                                             Nguard = NGUARD, Tmax = TMAX, nsaves = NSAVES)["uref"]
 
