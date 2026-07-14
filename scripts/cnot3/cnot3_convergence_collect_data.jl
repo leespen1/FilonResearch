@@ -28,8 +28,8 @@ data directory is *not* namespaced by commit — runs are reused across commits.
 
 Data collection and plotting are separate: this script only writes per-run
 histories and timing/GMRES diagnostics.  Errors are computed downstream against a
-Vern9 reference solution (see `cnot3_summarize.jl` / `cnot3_plot.jl`); nothing
-about a run's accuracy is stored here.
+Vern9 reference solution (see `src/error_analysis.jl` and the paper figure/table
+scripts); nothing about a run's accuracy is stored here.
 
 # Running a subset (e.g. one SLURM batch)
 

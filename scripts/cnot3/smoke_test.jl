@@ -1,8 +1,8 @@
 # Fast end-to-end smoke test of the CNOT3 pipeline: a tiny, reduced problem run
 # through the same `produce_or_load` machinery as the real collection script,
 # written to a separate "cnot3ConvergenceSmoke" data prefix.  Verifies that
-# results are cached (a re-run skips them) and that the plotting script produces
-# a figure.  Not the real experiment.
+# results are cached (a re-run skips them) and that the Vern9 reference
+# machinery runs at the reduced size.  Not the real experiment.
 #
 #   julia --project=. scripts/cnot3/smoke_test.jl
 
@@ -68,15 +68,10 @@ t_rerun = @elapsed foreach(
     c -> process_convergence_config(run_simulation, c, prefix, outdir), configs)
 @printf("Re-run of %d configs took %.3f s (cache hits).\n", length(configs), t_rerun)
 
-# The plotting script only loads the Vern9 reference, so precompute it for the
-# frame/init it will plot (its defaults: rwa / basis) at the smoke problem size.
+# Exercise the Vern9 reference machinery at the smoke problem size (cached
+# under the same data dir conventions the real pipeline uses).
 println("\nComputing the Vern9 reference for the smoke problem ...")
 include(srcdir("cnot3_reference.jl"))
 vern9_reference(; frame = "rwa", initialCondition = "basis",
                 Nosc = nOscLevels, Nguard = nGuardLevels, Tmax = Tmax, nsaves = nsaves)
-
-# Drive the plotting script against the smoke data.
-println("\nRunning the plotting script on the smoke data ...")
-ENV["CNOT3_PREFIX"] = prefix
-include(joinpath(@__DIR__, "cnot3_plot.jl"))
 println("\nSmoke test complete.")

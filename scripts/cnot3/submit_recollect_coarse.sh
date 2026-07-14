@@ -7,8 +7,8 @@
 # solver, a baseline for hermite).
 #
 # Purpose: establish where each (frame, method, s) curve sits under the corrected
-# dynamics so the per-curve deep tails can be sized (see submit_recollect_deep.sh
-# / cnot3_summarize.jl).  The Filon-family lab ranges start coarse (2^10) to
+# dynamics so the per-curve deep tails can be sized (see
+# submit_recollect_deep.sh).  The Filon-family lab ranges start coarse (2^10) to
 # capture the pre-asymptotic onset.  Every (method,s,frame,nsteps) solve is cached
 # by produce_or_load, so these compose with the deep pass and can be resubmitted.
 #

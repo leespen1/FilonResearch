@@ -91,8 +91,7 @@ end
 CNOT target unitary embedded in the full Hilbert space (`N_tot × N_ess` columns),
 expressed in the given `frame`.  In the lab frame the target is `U0 * CNOT` on
 the essential basis columns (Juqbox convention); rotating frames (`rwa`/`norwa`)
-see it through the diagonal rotation ψ_rot = e^{iWT} ψ_lab with W = Σₖ ωₖ nₖ,
-the transform verified numerically in `scripts/cnot3/verify_frames.jl`.
+see it through the diagonal rotation ψ_rot = e^{iWT} ψ_lab with W = Σₖ ωₖ nₖ.
 """
 function cnot3_gate_target(frame; Nosc, Nguard, Tmax)
     fr = Symbol(frame)
