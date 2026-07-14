@@ -92,7 +92,8 @@ scalar_filon ← derivatives, filon_weights, explicit_filon_integral
 Umbrella DrWatson project (repo root):
 - `scripts/` - DrWatson experiment scripts (`@quickactivate "FilonExperiments"`)
 - `src/` - experiment helper files pulled in via `include(srcdir("..."))`
-- `data/`, `plots/`, `notebooks/`, `_research/` - DrWatson output dirs (gitignored)
+- `data/`, `notebooks/`, `_research/` - DrWatson output dirs (gitignored)
+- `plots/` - figures and LaTeX tables produced by the scripts (tracked)
 - `papers/` - write-ups kept under version control
 
 Library packages:

@@ -26,8 +26,10 @@ library packages that the project `dev`s by path:
   problem definition and control-pulse coefficients
   (`src/cnot3_hoho_helpers.jl`), so all parameters needed to reproduce the
   results are in this repository.
-- `data/`, `plots/` - DrWatson output directories, not under version control;
-  scripts create and populate them.
+- `plots/` - figures and LaTeX tables produced by the scripts; tracked, so
+  the paper's final artifacts are part of the repository.
+- `data/` - DrWatson data directory, not under version control (too large);
+  scripts create and populate it.
 
 ## Setup
 
