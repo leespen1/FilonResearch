@@ -150,14 +150,16 @@ function save_table(basename, title, caption, blocks)
         "    \\toprule",
         "    \\multicolumn{$ncols}{c}{$title} \\\\",
         "    \\midrule[\\heavyrulewidth]",
-        "    & & \\multicolumn{$(length(TABLE_TARGETS))}{c}{Target final-time error} \\\\",
+        "    & & \\multicolumn{$(length(TABLE_TARGETS))}{c}{Target Final-Time Error} \\\\",
         "    \\cmidrule(lr){3-$ncols}",
         "    " * header,
     ]
     for (block_title, entries) in blocks
-        append!(lines, ["    \\midrule",
-                        "    \\multicolumn{$ncols}{c}{$block_title} \\\\",
-                        "    \\midrule"])
+        # A single-frame table needs no block subtitle to distinguish frames.
+        length(blocks) == 1 ? push!(lines, "    \\midrule") :
+            append!(lines, ["    \\midrule",
+                            "    \\multicolumn{$ncols}{c}{$block_title} \\\\",
+                            "    \\midrule"])
         for (i, (m, s)) in enumerate(TABLE_ROWS)
             s == first(SVALS) && i > 1 && push!(lines, "    \\addlinespace")
             push!(lines, "    $(row_label(m, s)) & $s & " * join(entries[i, :], " & ") * " \\\\")
@@ -192,6 +194,53 @@ const EXTRAP_NOTE = "Asterisked entries rely on extrapolation from the finest " 
 
 const TABLE_FRAMES = ("lab" => "Lab Frame", "rwa" => "RWA Frame")
 
+# One entry per table kind: the DrWatson basename stem, the title row, and the
+# body sentence(s) of the caption (the frame context and extrapolation note are
+# prepended/appended per call).
+const TABLE_SPECS = (
+    (kind = :speedup, stem = "speedup_time", title = "Relative Time to Compute Solution",
+     body = "For each target final-time error the fastest (method, \$s\$) pair " *
+            "is marked ``--'' and every other row reports the ratio of its minimal " *
+            "time reaching that error to the fastest time; \$a(b)\$ denotes " *
+            "\$a \\times 10^{b}\$."),
+    (kind = :dtratio, stem = "speedup_dt", title = "Relative Step Size",
+     body = "For each target final-time error the (method, \$s\$) pair reaching " *
+            "it at the largest \$\\Delta t\$ is marked ``--'' and every other row " *
+            "reports the ratio of that largest \$\\Delta t\$ to its own required " *
+            "\$\\Delta t\$; \$a(b)\$ denotes \$a \\times 10^{b}\$."),
+    (kind = :raw_dt, stem = "required_dt", title = "Required Step Size (ns)",
+     body = "Largest \$\\Delta t\$ reaching each target final-time error; " *
+            "\$a(b)\$ denotes \$a \\times 10^{b}\$."),
+    (kind = :raw_time, stem = "required_time", title = "Required Time to Solution (s)",
+     body = "Minimal time to solution (seconds) reaching each target final-time " *
+            "error; \$a(b)\$ denotes \$a \\times 10^{b}\$."),
+)
+
+# Frame context sentence for the caption: the combined table compares both
+# frames as stacked blocks; a single-frame table just names its frame.
+function frame_context(pretty, frames)
+    length(frames) == 1 || return "CNOT3 experiment, $pretty; the blocks are the " *
+        "lab and RWA frames, compared within each block."
+    fname = frames[1] == "lab" ? "lab frame" : "RWA frame"
+    return "CNOT3 experiment, $pretty, $fname."
+end
+
+# Emit the four tables for a selection of frames.  `infix` distinguishes the
+# single-frame variants ("_lab", "_rwa") from the combined table ("").
+function write_frame_tables(ent, init, pretty, frames, infix)
+    ctx = frame_context(pretty, frames)
+    blocks(kind) = [(block_title, ent[frame, kind])
+                    for (frame, block_title) in TABLE_FRAMES if frame in frames]
+    # A single-frame table names its frame in the title, since it has no block
+    # subtitle row to carry that information.
+    title_suffix = length(frames) == 1 ?
+        ", " * only(bt for (f, bt) in TABLE_FRAMES if f in frames) : ""
+    for spec in TABLE_SPECS
+        save_table("cnot3_$(spec.stem)$(infix)_$init", spec.title * title_suffix,
+                   "$ctx $(spec.body) $EXTRAP_NOTE", blocks(spec.kind))
+    end
+end
+
 function tables_for(df_all, init)
     ent = Dict()
     for (frame, _) in TABLE_FRAMES
@@ -204,28 +253,11 @@ function tables_for(df_all, init)
         ent[frame, :raw_dt] = raw_table(reqs; getval = c -> c.dt)
         ent[frame, :raw_time] = raw_table(reqs; getval = c -> c.time)
     end
-    blocks(kind) = [(block_title, ent[frame, kind]) for (frame, block_title) in TABLE_FRAMES]
     pretty = (init == "basis" ? "gate-basis" : init) * " initial condition"
-    ctx = "CNOT3 experiment, $pretty; the blocks are the lab and RWA frames, " *
-          "compared within each block."
 
-    save_table("cnot3_speedup_time_$init", "Relative Time to Compute Solution",
-        "$ctx For each target final-time error the fastest (method, \$s\$) pair " *
-        "is marked ``--'' and every other row reports the ratio of its minimal " *
-        "time reaching that error to the fastest time; \$a(b)\$ denotes " *
-        "\$a \\times 10^{b}\$. $EXTRAP_NOTE", blocks(:speedup))
-    save_table("cnot3_speedup_dt_$init", "Relative Step Size",
-        "$ctx For each target final-time error the (method, \$s\$) pair reaching " *
-        "it at the largest \$\\Delta t\$ is marked ``--'' and every other row " *
-        "reports the ratio of that largest \$\\Delta t\$ to its own required " *
-        "\$\\Delta t\$; \$a(b)\$ denotes \$a \\times 10^{b}\$. $EXTRAP_NOTE",
-        blocks(:dtratio))
-    save_table("cnot3_required_dt_$init", "Required Step Size (ns)",
-        "$ctx Largest \$\\Delta t\$ reaching each target final-time error; " *
-        "\$a(b)\$ denotes \$a \\times 10^{b}\$. $EXTRAP_NOTE", blocks(:raw_dt))
-    save_table("cnot3_required_time_$init", "Required Time to Solution (s)",
-        "$ctx Minimal time to solution (seconds) reaching each target final-time " *
-        "error; \$a(b)\$ denotes \$a \\times 10^{b}\$. $EXTRAP_NOTE", blocks(:raw_time))
+    write_frame_tables(ent, init, pretty, ["lab", "rwa"], "")
+    write_frame_tables(ent, init, pretty, ["lab"], "_lab")
+    write_frame_tables(ent, init, pretty, ["rwa"], "_rwa")
 
     for (frame, block_title) in TABLE_FRAMES
         where_ = "$block_title, $pretty"
