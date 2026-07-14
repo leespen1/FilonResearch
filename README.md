@@ -154,9 +154,32 @@ missing.
    julia --project=. scripts/cnot3/cnot3_controls_solution.jl   # controls figure
    ```
 
-   Environment toggles: `CNOT3_INIT` restricts to one initial condition,
-   `CNOT3_PREFIX` selects an alternate data directory, and `CNOT3_IC_LABEL`
-   re-enables the initial-condition suffix in figure titles.
+   The scripts are configured by environment variables; **the paper's
+   figures and tables use the default for every one of them**, so the
+   plain commands above reproduce the paper exactly.
+
+   Shared by all three CNOT3 scripts (via `src/cnot3_paper_common.jl`):
+
+   - `CNOT3_PREFIX` — data directory under `data/` to read
+     (default `cnot3Convergence`, the paper sweep).
+   - `CNOT3_INIT` — restrict to one initial condition, `basis` or
+     `uniform` (default: both).
+
+   `cnot3_convergence_paper.jl` only:
+
+   - `CNOT3_LEGEND` — set `0` to omit the legends (default on).
+
+   `cnot3_controls_solution.jl` only:
+
+   - `CNOT3_ROT_FRAME` — frame for the rotating-frame column, `rwa` or
+     `norwa` (default `rwa`).
+   - `CNOT3_TSTART` / `CNOT3_TSTOP` — rotating-frame display window in ns
+     (defaults 50 / 75).
+   - `CNOT3_LAB_TSTOP` — end of the narrow lab-frame window in ns
+     (default 50.5; its solve density is 320 points/ns).
+   - `CNOT3_NSTATES` — number of most-populous states plotted (default 6).
+
+   The Rabi and table scripts take no options beyond the shared ones.
 
 For a quick end-to-end check of the CNOT3 pipeline on a reduced problem, run
 `julia --project=. scripts/cnot3/smoke_test.jl`.
