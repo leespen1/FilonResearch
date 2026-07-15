@@ -205,7 +205,8 @@ expression simplifies to exactly zero.
 
 Because the full CNOT3 sweep is expensive, the collected data (references
 and per-run results) is archived at
-[doi:10.5281/zenodo.21353409](https://doi.org/10.5281/zenodo.21353409),
+[doi:10.5281/zenodo.21353408](https://doi.org/10.5281/zenodo.21353408)
+(concept DOI, resolving to the latest version),
 together with `Manifest.toml` snapshots that pin exact package versions for
 the umbrella project and both library packages (Julia 1.12.5); the paper's
 figures and tables regenerate from the archived data under these pinned
